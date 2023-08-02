@@ -187,7 +187,9 @@ int init_vsync(void)
 **/
 int reboot_lepton(void)
 {
-	
+	LEP_CAMERA_PORT_DESC_T lepton_port;
+	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	LEP_RunOemReboot(&lepton_port);
 }
 
 
@@ -505,7 +507,7 @@ int main(int argc, char *argv[])
 			// If dsync occurs, wait for frame to time out to reset.
 			if(status<0)
 			{
-				usleep(1000000);
+				usleep(5000000);
 			}
 
 			// Restart the clock for the next VSYNC servicing period
