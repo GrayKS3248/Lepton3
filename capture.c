@@ -43,6 +43,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "LEPTON_Types.h"
 #include "LEPTON_SDK.h"
 #include "LEPTON_OEM.h"
+#include "LEPTON_SYS.h"
 
 /**
 **/
@@ -81,10 +82,10 @@ static const uint32_t speed = 16000000;
 
 // If nonzero, how long to delay after the last bit transfer
 // before optionally deselecting the device before the next transfer.
-static const uint16_t delay = 128;
+static const uint16_t delay = 0;
 
 // 0 to deselect device before starting the next transfer.
-static const uint8_t deselect = 1;
+static const uint8_t deselect = 0;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -132,7 +133,7 @@ static uint8_t frame_segment[FRAME_SEGMENT_SIZE];
 
 // Create a buffer to hold a single frame. Each frame is 120x160 pixels.
 // Each pixel is an unsigned 16 bit integer
-static unsigned int frame[120][160];
+static uint16_t frame[120][160] = { 0 };
 
 
 /**
@@ -195,7 +196,51 @@ int reboot_lepton(void)
 
 /**
 **/
-/*static void save_pgm_file(void)
+int get_lepton_status(void)
+{
+	LEP_CAMERA_PORT_DESC_T lepton_port;
+	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	LEP_RESULT status = LEP_RunSysPing(&lepton_port);
+
+	if(status == LEP_OK)
+	{
+		return 0;
+	}
+	return -1;
+}
+
+
+/**
+**/
+int set_video_format_raw14(void)
+{
+	LEP_CAMERA_PORT_DESC_T lepton_port;
+	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+
+	LEP_OEM_VIDEO_OUTPUT_FORMAT_E format = LEP_END_VIDEO_OUTPUT_FORMAT;
+	LEP_RESULT status = LEP_GetOemVideoOutputFormat(&lepton_port, &format);
+	if(status != 0)
+	{
+		pabort("failed to read current video output format");
+	}
+
+	if(format != LEP_VIDEO_OUTPUT_FORMAT_RAW14)
+	{
+		format = LEP_VIDEO_OUTPUT_FORMAT_RAW14;
+		LEP_RESULT status = LEP_SetOemVideoOutputFormat(&lepton_port, format);
+		if(status != 0)
+		{
+			pabort("failed to set current video output format");
+		}
+	}
+
+	return 0;
+}
+
+
+/**
+**/
+static void save_pgm_file(void)
 {
 	int i;
 	int j;
@@ -204,6 +249,7 @@ int reboot_lepton(void)
 	char image_name[32];
 	int image_index = 0;
 
+	// Find next available file name up to IMG_9999.pgm
 	do {
 		sprintf(image_name, "IMG_%.4d.pgm", image_index);
 		image_index += 1;
@@ -212,52 +258,55 @@ int reboot_lepton(void)
 			image_index = 0;
 			break;
 		}
-
 	} while (access(image_name, F_OK) == 0);
 
+	// Open file
 	FILE *f = fopen(image_name, "w");
 	if (f == NULL)
 	{
-		printf("Error opening file!\n");
-		exit(1);
+		pabort("error opening save file");
 	}
 
-	printf("Calculating min/max values for proper scaling...\n");
-	for(i=0;i<60;i++)
+	// Find min and max pixel values (ignore 0 pixel values)
+	for(i=0;i<120;i++)
 	{
-		for(j=0;j<80;j++)
+		for(j=0;j<160;j++)
 		{
-			if (lepton_image[i][j] > maxval) {
-				maxval = lepton_image[i][j];
+			if (frame[i][j] > maxval) {
+				maxval = frame[i][j];
 			}
-			if (lepton_image[i][j] < minval) {
-				minval = lepton_image[i][j];
+			if ((frame[i][j] < minval) && (frame[i][j] != 0)) {
+				minval = frame[i][j];
 			}
 		}
 	}
-	printf("maxval = %u\n",maxval);
-	printf("minval = %u\n",minval);
 
-	fprintf(f,"P2\n80 60\n%u\n",maxval-minval);
-	for(i=0;i<60;i++)
+
+	// Save image data to pgm file
+	fprintf(f,"P2\n160 120\n%u\n",maxval-minval);
+	for(i=0;i<120;i++)
 	{
-		for(j=0;j<80;j++)
+		for(j=0;j<160;j++)
 		{
-			fprintf(f,"%d ", lepton_image[i][j] - minval);
+			if(frame[i][j]==0) frame[i][j] = minval;
+			fprintf(f,"%d ", frame[i][j] - minval);
 		}
 		fprintf(f,"\n");
 	}
 	fprintf(f,"\n\n");
 
+	// Close file
 	fclose(f);
-} */
+}
 
-int transfer_segment(int fd)
+
+/**
+**/
+int transfer_segment(int *spi_fd)
 {
-	clock_t start = clock();
-
 	// Status variables
 	int status;
+	clock_t start = clock();
 
 	// Discard tracking variables
 	int discard_packet;
@@ -267,6 +316,11 @@ int transfer_segment(int fd)
 	uint16_t expected_packet_number = 0;
 	uint16_t packet_num = 0;
 	uint8_t segment_num;
+
+	// Pixel calculation variables
+	uint16_t pixel_val;
+	uint8_t row = 0;
+	uint8_t col = 0;
 
 	/// struct spi_ioc_transfer: describes a single SPI transfer
 	/// @tx_buf: Holds pointer to userspace buffer with transmit data, or null.
@@ -288,12 +342,18 @@ int transfer_segment(int fd)
 		.cs_change = deselect,
 	};
 
-	// Recieve 60 valid packets (may include additional discard packets)
+	// Recieve 60 valid packets
 	while(packet_num < 60)
 	{
-		// Transfer one frame packet. status gives the number of bytes
+		// Calculate the byte index of the current packet in the frame segment
+		//byte_index = packet_num*FRAME_PACKET_SIZE;
+
+
+		// Transfer one frame packet. Status gives the number of bytes
 		// recieved.
-		status = ioctl(fd, SPI_IOC_MESSAGE(1), &mesg);
+		//status = read(*spi_fd, frame_segment+byte_index, FRAME_PACKET_SIZE);
+		status = read(*spi_fd, frame_packet, FRAME_PACKET_SIZE);
+		//status = ioctl(*spi_fd, SPI_IOC_MESSAGE(1), &mesg);
 		if (status < 1)
 		{
 			// status < 1 indicates transfer failure
@@ -303,6 +363,7 @@ int transfer_segment(int fd)
 		// Check if the recieved packet is a discard packet.
 		// If it is, ignore the packet and continue to the next.
 		discard_packet = (frame_packet[0] & 0x0f) == 0x0f;
+		//discard_packet = (frame_segment[byte_index] & 0x0f) == 0x0f;
 		if(discard_packet)
 		{
 			num_packets_discarded++;
@@ -312,19 +373,23 @@ int transfer_segment(int fd)
 		// Retrieve the packet num by extracting the last
 		// 12 bits of the frame ID
 		packet_num = frame_packet[0]; //0x00_(byte 0)
+		//packet_num = frame_segment[byte_index]; //0x00_(byte 0)
 		packet_num = packet_num << 8; //0x(byte 0)_00
 		packet_num = packet_num | frame_packet[1]; //0x(byte 0)_(byte 1)
 		packet_num = packet_num & 0x0fff; //0x0(bits 4-7 of byte 0)_(byte 1)
-
-		// Print packet data
-		// printf("[num discarded: %d] (recieved packet num: %d) (expected packet num: %d)\n", num_packets_discarded, packet_num, expected_packet_number);
+		row = packet_num / 2;
 
 		// Synchronization error detection
 		if (expected_packet_number != packet_num)
 		{
 			double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
-			printf("unexpected packet number - expected %d - got %d\n", expected_packet_number, packet_num);
+			if(expected_packet_number>20)
+			{
+				printf("Segement number: %d\n", segment_num);
+			}
+			printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_number, packet_num);
 			printf("Time spent transferring packets: %1.3fms\n", 1000.*elapsed);
+			if(expected_packet_number>=25) save_pgm_file();
 			return -1;
 		}
 
@@ -334,16 +399,30 @@ int transfer_segment(int fd)
 		if (packet_num == 20)
 		{
 			segment_num = frame_packet[0]; //first 8 bits
+			//segment_num = frame_segment[byte_index]; //first 8 bits
 			segment_num = segment_num & 0x70; // isolate bits 1-3
 			segment_num = segment_num >> 4; // push bits 1-3 to the end
+		}
+
+		// Unpack payload
+		if(col == 160) col = 0;
+		for(int i=FRAME_PACKET_ID_SIZE+FRAME_PACKET_CRC_SIZE; i<FRAME_PACKET_SIZE; i+=2)
+		{
+			// Extract pixel value
+			pixel_val = frame_packet[i];
+			pixel_val = pixel_val << 8;
+			pixel_val = pixel_val | frame_packet[i+1];
+			pixel_val = pixel_val & 0x3fff;
+
+			// Add pixel to frame
+			frame[row][col] = pixel_val;
+			col++;
 		}
 
 		// Iterate the expected packet number for the next recieve packet loop
 		expected_packet_number++;
 
 	}
-
-	printf("SEGMENT: %d", segment_num);
 
 	return 0;
 
@@ -433,13 +512,19 @@ int main(int argc, char *argv[])
 	}
 
 	// print configure SPI settings
-	printf("spi mode: %d\n", rd_mode);
-	printf("bits per word: %d\n", rd_bits);
-	printf("max speed: %d Hz (%d MHz)\n", rd_speed, rd_speed/1000000);
+	printf("===SPI CONFIG===\n", rd_mode);
+	printf("Device: %s\n", spi_device);
+	printf("Mode: %d\nBits per Word: %d\nClock: %d MHz\n", rd_mode, rd_bits, rd_speed/1000000);
+	printf("Delay: %d\nDeselect: %d\n", delay, deselect);
 
 
 	///=====================ENGAGE VSYNC MODE=====================///
-	init_vsync();
+	status = init_vsync();
+	if(status==0)
+	{
+		printf("\n\n===VSYNC CONFIG===\n");
+		printf("Lepton GPIO Mode: LEP_OEM_GPIO_MODE_VSYNC\n");
+	}
 
 
 	///=====================INITIALIZE GPIO DEVICE=====================///
@@ -467,18 +552,47 @@ int main(int argc, char *argv[])
 		pabort("unable to get GPIO line handle");
 	}
 
+	printf("\n\n===GPIO CONFIG===\n");
+	printf("Chip: %s\n", gpio_device);
+	printf("Line: %d\n", gpio_line_handle.lineoffsets[0]);
+
 
 	///=====================IMAGE CAPTURE OPERATIONS=====================///
-	// Poll GPIO chip 0, line 82 (Header: 7J1, Pin: 38) for next VSYNC pulse
-	// The VSYNC signal is low during illegal frame read times ~9.42ms
-	// The VSYNC signal is high during legal frame read times ~74us
-	uint8_t prev_vsync_val = 0;
-	uint8_t curr_vsync_val;
+	// Ensure Lepton camera status is good, then continue
+	status = get_lepton_status();
+	if(status==0)
+	{
+		printf("\n\n===CAMERA STATUS===\n");
+		printf("Camera ping returned success\n");
+	}
+	else
+	{
+		pabort("camera ping returned failure");
+	}
+	status = set_video_format_raw14();
+	if(status==0)
+	{
+		printf("Video output format: RAW14\n");
+	}
+	else
+	{
+		pabort("failed to set video format to RAW14");
+	}
+
+	// Variables used for VSYNC pulse detection
+	uint8_t curr_vsync_val = 0;
+	uint8_t prev_vsync_val = 1;
 	uint16_t vsync_pulse_num = 0;
+
+	// Variables used to measure VSYNC servicing time
 	clock_t start_time, end_time;
 	double elapsed_time;
+
+	// Poll GPIO chip 0, line 82 (Header: 7J1, Pin: 38) for next VSYNC pulse
+	// The VSYNC pulse rising edge indicates start of new frame time
+	printf("\n\n===READING DATA===\n");
 	start_time = clock();
-	for(int i = 0; i < 10000; i++)
+	for(int i = 0; i < 50000; i++)
 	{
 		// Retrieve data from GPIO line handle
 		status = ioctl(gpio_line_handle.fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &gpio_line_data);
@@ -492,35 +606,31 @@ int main(int argc, char *argv[])
 			pabort("error while polling event from GPIO");
 		}
 
-		// Detect legal frame read pulse
+		// Detect new frame time pulse
 		curr_vsync_val = gpio_line_data.values[0];
 		if(curr_vsync_val==1 && prev_vsync_val==0)
 		{
-			status = transfer_segment(spi_fd); // If VSYNC edge is detected, transfer segment
+			end_time = clock();
+			status = transfer_segment(&spi_fd); // If VSYNC edge is detected, transfer segment
 
 			// Keep track of VSYNC servicing periods
-			end_time = clock();
 			elapsed_time = (double)(end_time-start_time) / CLOCKS_PER_SEC;
-			printf("Frame pulse: %d. Time spent servicing VSYNC pulse: %1.3fms.\n", vsync_pulse_num, 1000.0*elapsed_time);
+			printf("Frame pulse: %d. Time spent polling: %1.3fms.\n", vsync_pulse_num, 1000.0*elapsed_time);
 			vsync_pulse_num++;
 
 			// If dsync occurs, wait for frame to time out to reset.
 			if(status<0)
 			{
-				usleep(5000000);
+				printf("Waiting for desync reset...\n");
+				usleep(185000);
 			}
 
 			// Restart the clock for the next VSYNC servicing period
+			printf("----------------------------------------------------------\n\n");
 			start_time = clock();
 		}
-		prev_vsync_val=curr_vsync_val;
+		prev_vsync_val = curr_vsync_val;
 
-		// Reduce processor usage
-		// VSYNC edges must be detected within two clock cycles
-		// of the Lepton master clock. Setting this sleep too high
-		// will result in failure to synchronize and/or maintain
-		// sync with Lepton module
-		//usleep(1);
 	}
 
 
@@ -528,7 +638,6 @@ int main(int argc, char *argv[])
 	close(spi_fd);
 	close(gpio_fd);
 	close(gpio_line_handle.fd);
-	//save_pgm_file();
 
 	return 0;
 }
