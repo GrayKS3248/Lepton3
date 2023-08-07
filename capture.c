@@ -147,46 +147,24 @@ static uint16_t frame[120][160] = { 0 };
 **/
 int init_vsync(void)
 {
-	// Open an I2C port to the command and
-	// control interface of the Lepton camera
+	// Open I2C port
 	LEP_CAMERA_PORT_DESC_T lepton_port;
+	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	if(status != LEP_OK) return -1;
 
-	//LEP_UINT16 @portID: User defined value to identify a specific comm port.
-	//Useful when multiple cameras are attached to a single Host.
-	//LEP_CAMERA_PORT_E @portType: LEP_CCI_TWI or LEP_CCI_SPI.
-	//LEP_UINT16 @portBaudRate: Port-specific kHz baud. TWI supports only 400.
-	//LEP_CAMERA_PORT_DESC_T_PTR @portDescPtr: Pointer to Lepton port file descriptor
-	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	// Check current GPIO mode
+	LEP_OEM_GPIO_MODE_E gpio_mode = LEP_OEM_END_GPIO_MODE;
+	status = LEP_GetOemGpioMode(&lepton_port, &gpio_mode);
+	if(status != LEP_OK) return -1;
 
 	// Set GPIO mode to VSYNC
-	//LEP_CAMERA_PORT_DESC_T_PTR @portDescPtr: Pointer to Lepton port file descriptor
-	//LEP_OEM_GPIO_MODE_E @gpioMode:
-	//LEP_OEM_GPIO_MODE_GPIO = 0,
-	//LEP_OEM_GPIO_MODE_I2C_MASTER = 1,
-	//LEP_OEM_GPIO_MODE_SPI_MASTER_VLB_DATA = 2,
-	//LEP_OEM_GPIO_MODE_SPIO_MASTER_REG_DATA = 3,
-	//LEP_OEM_GPIO_MODE_SPI_SLAVE_VLB_DATA = 4,
-	//LEP_OEM_GPIO_MODE_VSYNC = 5
-	LEP_RESULT result = LEP_SetOemGpioMode(&lepton_port, LEP_OEM_GPIO_MODE_VSYNC);
-	if(result != 0)
-	{
-		pabort("failed to set GPIO mode"); //abort if the GPIO mode cannot be set
-	}
-
-
-	// Check mode after setting VSYNC
-	LEP_OEM_GPIO_MODE_E gpio_mode = LEP_OEM_END_GPIO_MODE;
-	result = LEP_GetOemGpioMode(&lepton_port, &gpio_mode);
-	if(result != 0)
-	{
-		pabort("failed to read current GPIO mode"); //abort if GPIO mode read failure
-	}
 	if(gpio_mode != LEP_OEM_GPIO_MODE_VSYNC)
 	{
-		pabort("incorrect GPIO mode"); //abort if the GPIO mode is not set
+		status = LEP_SetOemGpioMode(&lepton_port, LEP_OEM_GPIO_MODE_VSYNC);
+		if(status != LEP_OK) return -1;
 	}
 
-	// return 0 on success
+	// 0 on success
 	return 0;
 }
 
@@ -195,9 +173,17 @@ int init_vsync(void)
 **/
 int reboot_lepton(void)
 {
+	// Open I2C port
 	LEP_CAMERA_PORT_DESC_T lepton_port;
-	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
-	LEP_RunOemReboot(&lepton_port);
+	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	if(status != LEP_OK) return -1;
+
+	// Reboot
+	status = LEP_RunOemReboot(&lepton_port);
+	if(status != LEP_OK) return -1;
+
+	// 0 on success
+	return -1;
 }
 
 
@@ -205,15 +191,17 @@ int reboot_lepton(void)
 **/
 int get_lepton_status(void)
 {
+	// Open I2C port
 	LEP_CAMERA_PORT_DESC_T lepton_port;
-	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
-	LEP_RESULT status = LEP_RunSysPing(&lepton_port);
+	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	if(status != LEP_OK) return -1;
 
-	if(status == LEP_OK)
-	{
-		return 0;
-	}
-	return -1;
+	// Ping the camera
+	status = LEP_RunSysPing(&lepton_port);
+	if(status != LEP_OK) return -1;
+
+	// 0 on success
+	return 0;
 }
 
 
@@ -221,26 +209,24 @@ int get_lepton_status(void)
 **/
 int set_video_format_raw14(void)
 {
+	// Open I2C port
 	LEP_CAMERA_PORT_DESC_T lepton_port;
 	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
 
+	// Check the current video format
 	LEP_OEM_VIDEO_OUTPUT_FORMAT_E format = LEP_END_VIDEO_OUTPUT_FORMAT;
 	LEP_RESULT status = LEP_GetOemVideoOutputFormat(&lepton_port, &format);
-	if(status != 0)
-	{
-		pabort("failed to read current video output format");
-	}
+	if(status != LEP_OK) return -1;
 
+	// Set RAW14 as video format
 	if(format != LEP_VIDEO_OUTPUT_FORMAT_RAW14)
 	{
 		format = LEP_VIDEO_OUTPUT_FORMAT_RAW14;
 		LEP_RESULT status = LEP_SetOemVideoOutputFormat(&lepton_port, format);
-		if(status != 0)
-		{
-			pabort("failed to set current video output format");
-		}
+		if(status != LEP_OK) return -1;
 	}
 
+	// 0 on success
 	return 0;
 }
 
@@ -309,12 +295,12 @@ static void save_pgm_file(void)
 
 /**
 **/
-int read_packet_num(uint16_t *packet_num)
+void read_packet_num(uint8_t byte_0, uint8_t byte_1, uint16_t *packet_num)
 {
-	packet_num = frame_packet[0]; //0x00_(byte 0)
-	packet_num = packet_num << 8; //0x(byte 0)_00
-	packet_num = packet_num | frame_packet[1]; //0x(byte 0)_(byte 1)
-	packet_num = packet_num & 0x0fff; //0x0(bits 4-7 of byte 0)_(byte 1)
+	*packet_num = (uint16_t)byte_0; //0x00_(byte 0)
+	*packet_num = *packet_num << 8; //0x(byte 0)_00
+	*packet_num = *packet_num | (uint16_t)byte_1; //0x(byte 0)_(byte 1)
+	*packet_num = *packet_num & 0x0fff; //0x0(bits 4-7 of byte 0)_(byte 1)
 }
 
 
@@ -324,11 +310,10 @@ int transfer_segment(int *spi_fd)
 {
 	// Status variables
 	int status;
-	clock_t start = clock();
 
 	// Discard tracking variables
 	uint8_t discard_packet = 1;
-	int num_packets_discarded = 0;
+	uint16_t num_discard= 0;
 
 	// Packet ID tracking variables
 	uint16_t expected_packet_number = 0;
@@ -340,42 +325,44 @@ int transfer_segment(int *spi_fd)
 	uint8_t row = 0;
 	uint8_t col = 0;
 
-	/// struct spi_ioc_transfer: describes a single SPI transfer
-	/// @tx_buf: Holds pointer to userspace buffer with transmit data, or null.
-	/// If no data is provided, zeroes are shifted out.
-	/// @rx_buf: Holds pointer to userspace buffer for receive data, or null.
-	/// @len: Length of tx and rx buffers, in bytes.
-	/// @speed_hz: Temporary override of the device's bitrate.
-	/// @bits_per_word: Temporary override of the device's wordsize.
-	/// @delay_usecs: If nonzero, how long to delay after the last bit transfer
-	/// before optionally deselecting the device before the next transfer.
-	/// @cs_change: 0 to deselect device before starting the next transfer.
-	/* struct spi_ioc_transfer mesg = {
-		.tx_buf = (unsigned long)NULL,
-		.rx_buf = (unsigned long)frame_packet,
-		.len = 2*FRAME_PACKET_SIZE,
-		.speed_hz = speed,
-		.bits_per_word = bits,
-		.delay_usecs = delay,
-		.cs_change = deselect,
-	}; */
 
 	// Recieve discard packets until the first valid packet is detected
 	do {
 		// Read a single frame packet
-		status = read(*spi_fd, frame_packet, FRAME_PACKET_SIZE)
+		status = read(*spi_fd, frame_packet, FRAME_PACKET_SIZE);
 		if(status != FRAME_PACKET_SIZE) pabort("did not recieve spi message");
 
 		// Determine if the frame packet is valid
 		discard_packet = (frame_packet[0] & 0x0f) == 0x0f;
-		if(discard_packet) num_discarded++;
+		if(discard_packet)
+		{
+			num_discard++;
+		}
 
-		// If the packet is valid, record the data
+		// If the packet is valid, read the packet number
 		else
 		{
+			read_packet_num(frame_packet[0], frame_packet[1], &packet_num);
+
+			// Ensure valid packet number
+			if(packet_num != 0)
+			{
+				printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
+				return -1;
+			}
+
+			// Unpack payload if valid
+			
 		}
 
 	} while (discard_packet == 1);
+
+
+
+/*
+
+
+
 
 
 	// Recieve 60 valid packets
@@ -458,7 +445,7 @@ int transfer_segment(int *spi_fd)
 		expected_packet_number++;
 
 	}
-
+*/
 	return 0;
 
 }
