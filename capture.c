@@ -233,7 +233,7 @@ int set_video_format_raw14(void)
 
 /**
 **/
-static void save_pgm_file(void)
+void save_pgm_file(void)
 {
 	int i;
 	int j;
@@ -301,6 +301,32 @@ void read_packet_num(uint8_t byte_0, uint8_t byte_1, uint16_t *packet_num)
 	*packet_num = *packet_num << 8; //0x(byte 0)_00
 	*packet_num = *packet_num | (uint16_t)byte_1; //0x(byte 0)_(byte 1)
 	*packet_num = *packet_num & 0x0fff; //0x0(bits 4-7 of byte 0)_(byte 1)
+}
+
+
+/**
+**/
+void unpack_raw14_payload(uint16_t packet_num, uint8_t payload_size, uint8_t *payload)
+{
+	// Get the row and col number from the packet number
+	uint16_t row_num = packet_num / 2;
+	uint16_t col_num = 0;
+	if(packet_num & 0x0001) col_num = 80;
+
+	// Loop trough payload
+	uint16_t pix_val;
+	for(uint8_t i = 0; i < payload_size; i+=2)
+	{
+		// Extract pixel value
+		pix_val = payload[i];
+		pix_val = pix_val << 8;
+		pix_val = pix_val | payload[i+1];
+		pix_val = pix_val & 0x3fff;
+
+		// Add pixel to frame
+		frame[row_num][col_num] = pix_val;
+		col_num++;
+	}
 }
 
 
