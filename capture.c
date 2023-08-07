@@ -94,6 +94,10 @@ In video format mode Raw14, there are 164 bytes per frame packet.
 In video format mode RGB888, there are 244 bytes per frame packet. */
 #define FRAME_PACKET_SIZE (164)
 
+/* The number of packets to recieve in a single transfer after
+synchronization has occured */
+#define N_PACKETS (2)
+
 /* The number of bytes of the ID section of the frame packet header
 The first bit of the ID field is always zero.
 The next three bits are the TTT bits.
@@ -126,7 +130,10 @@ countains either 60 packets (telemetry disabled) or 61 packet
 #define FRAME_SEGMENT_SIZE (9840)
 
 // Create SPI recieve buffer for a single frame packet of FRAME_PACKET_SIZE bytes
-uint8_t frame_packet[FRAME_PACKET_SIZE];
+static uint8_t frame_packet[FRAME_PACKET_SIZE];
+
+// Create SPI recieve buffer for N_PACKET frame packets of FRAME_PACKET_SIZE bytes
+static uint8_t n_frame_packet[N_PACKETS * FRAME_PACKET_SIZE];
 
 // Create space to hold a single frame segment
 static uint8_t frame_segment[FRAME_SEGMENT_SIZE];
@@ -302,6 +309,17 @@ static void save_pgm_file(void)
 
 /**
 **/
+int read_packet_num(uint16_t *packet_num)
+{
+	packet_num = frame_packet[0]; //0x00_(byte 0)
+	packet_num = packet_num << 8; //0x(byte 0)_00
+	packet_num = packet_num | frame_packet[1]; //0x(byte 0)_(byte 1)
+	packet_num = packet_num & 0x0fff; //0x0(bits 4-7 of byte 0)_(byte 1)
+}
+
+
+/**
+**/
 int transfer_segment(int *spi_fd)
 {
 	// Status variables
@@ -309,7 +327,7 @@ int transfer_segment(int *spi_fd)
 	clock_t start = clock();
 
 	// Discard tracking variables
-	int discard_packet;
+	uint8_t discard_packet = 1;
 	int num_packets_discarded = 0;
 
 	// Packet ID tracking variables
@@ -332,22 +350,39 @@ int transfer_segment(int *spi_fd)
 	/// @delay_usecs: If nonzero, how long to delay after the last bit transfer
 	/// before optionally deselecting the device before the next transfer.
 	/// @cs_change: 0 to deselect device before starting the next transfer.
-	struct spi_ioc_transfer mesg = {
+	/* struct spi_ioc_transfer mesg = {
 		.tx_buf = (unsigned long)NULL,
 		.rx_buf = (unsigned long)frame_packet,
-		.len = FRAME_PACKET_SIZE,
+		.len = 2*FRAME_PACKET_SIZE,
 		.speed_hz = speed,
 		.bits_per_word = bits,
 		.delay_usecs = delay,
 		.cs_change = deselect,
-	};
+	}; */
+
+	// Recieve discard packets until the first valid packet is detected
+	do {
+		// Read a single frame packet
+		status = read(*spi_fd, frame_packet, FRAME_PACKET_SIZE)
+		if(status != FRAME_PACKET_SIZE) pabort("did not recieve spi message");
+
+		// Determine if the frame packet is valid
+		discard_packet = (frame_packet[0] & 0x0f) == 0x0f;
+		if(discard_packet) num_discarded++;
+
+		// If the packet is valid, record the data
+		else
+		{
+		}
+
+	} while (discard_packet == 1);
+
 
 	// Recieve 60 valid packets
 	while(packet_num < 60)
 	{
 		// Calculate the byte index of the current packet in the frame segment
 		//byte_index = packet_num*FRAME_PACKET_SIZE;
-
 
 		// Transfer one frame packet. Status gives the number of bytes
 		// recieved.

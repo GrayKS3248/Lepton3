@@ -18,5 +18,5 @@ all:
 	$(CC) $(OBJ) -o$(OUT) -L$(LINK) -l$(LIB) $(LINKERFLAG)
 	
 clean:
-	rm -f *.o $(OUT)
+	rm -f *.o $(OUT) *.pgm
 	$(MAKE) clean -C$(INC)
