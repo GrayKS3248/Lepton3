@@ -78,25 +78,21 @@ static const uint8_t bits = 8;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
 // The highest allowed value is 20 MHz.
-static const uint32_t speed = 16000000;
-
-// If nonzero, how long to delay after the last bit transfer
-// before optionally deselecting the device before the next transfer.
-static const uint16_t delay = 0;
-
-// 0 to deselect device before starting the next transfer.
-static const uint8_t deselect = 0;
+static const uint32_t speed = 18000000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
 /* The number of bytes per VOSPI frame packet.
 In video format mode Raw14, there are 164 bytes per frame packet.
 In video format mode RGB888, there are 244 bytes per frame packet. */
-#define FRAME_PACKET_SIZE (164)
+#define PACKET_SIZE (164)
 
 /* The number of packets to recieve in a single transfer after
 synchronization has occured */
-#define N_PACKETS (2)
+#define N_PACKETS (20)
+
+/* The number of bytes in N_PACKET frame packets */
+#define N_PACKET_SIZE (PACKET_SIZE * N_PACKETS)
 
 /* The number of bytes of the ID section of the frame packet header
 The first bit of the ID field is always zero.
@@ -110,7 +106,7 @@ disabled and 0 - 60 with telemetry enabled. Packet numbers restart from
 0 on each new segment.
 The ID section also encodes the discard condition. Any packet whose ID
 section meets the condition (ID & 0x0F00) == 0x0F00 is a discard packet*/
-#define FRAME_PACKET_ID_SIZE (2)
+#define ID_SIZE (2)
 
 /* The number of bytes of the CRC section of the frame packet header
 The CRC portion of the packet header contains a 16-bit cyclic
@@ -120,23 +116,13 @@ The CRC is calculated over the entire packet, including the
 ID and CRC fields. However, the four most-significant
 bits of the ID and allsixteen bits of the CRC are set to zero
 for calculation of the CRC. */
-#define FRAME_PACKET_CRC_SIZE (2)
+#define CRC_SIZE (2)
 
-/* The number of bytes of a single VOSPI segment.
-A VOSPI segment is a continuous sequence of VoSPI packets
-consisting of one quarter of a frame of pixel data. Each segment
-countains either 60 packets (telemetry disabled) or 61 packet
-(telemetry enabled) */
-#define FRAME_SEGMENT_SIZE (9840)
+/* Number of bytes in frame packet before payload */
+#define HEADER_SIZE (ID_SIZE + CRC_SIZE)
 
-// Create SPI recieve buffer for a single frame packet of FRAME_PACKET_SIZE bytes
-static uint8_t frame_packet[FRAME_PACKET_SIZE];
-
-// Create SPI recieve buffer for N_PACKET frame packets of FRAME_PACKET_SIZE bytes
-static uint8_t n_frame_packet[N_PACKETS * FRAME_PACKET_SIZE];
-
-// Create space to hold a single frame segment
-static uint8_t frame_segment[FRAME_SEGMENT_SIZE];
+/* The number of bytes per packet payload */
+#define PAYLOAD_SIZE (PACKET_SIZE - HEADER_SIZE)
 
 // Create a buffer to hold a single frame. Each frame is 120x160 pixels.
 // Each pixel is an unsigned 16 bit integer
@@ -334,29 +320,21 @@ void unpack_raw14_payload(uint16_t packet_num, uint8_t payload_size, uint8_t *pa
 **/
 int transfer_segment(int *spi_fd)
 {
-	// Status variables
+	// Packet buffers
+	uint8_t frame_packet[PACKET_SIZE];
+	uint8_t n_frame_packet[N_PACKET_SIZE];
 	int status;
-
-	// Discard tracking variables
-	uint8_t discard_packet = 1;
-	uint16_t num_discard= 0;
-
-	// Packet ID tracking variables
-	uint16_t expected_packet_number = 0;
-	uint16_t packet_num = 0;
-	uint8_t segment_num;
-
-	// Pixel calculation variables
-	uint16_t pixel_val;
-	uint8_t row = 0;
-	uint8_t col = 0;
-
+	uint8_t discard_packet;
+	uint16_t num_discard = 0;
+	uint16_t byte_ind;
+	uint16_t expected_packet_num = 1;
+	uint16_t packet_num;
 
 	// Recieve discard packets until the first valid packet is detected
 	do {
 		// Read a single frame packet
-		status = read(*spi_fd, frame_packet, FRAME_PACKET_SIZE);
-		if(status != FRAME_PACKET_SIZE) pabort("did not recieve spi message");
+		status = read(*spi_fd, frame_packet, PACKET_SIZE);
+		if(status != PACKET_SIZE) pabort("did not recieve spi message");
 
 		// Determine if the frame packet is valid
 		discard_packet = (frame_packet[0] & 0x0f) == 0x0f;
@@ -378,12 +356,37 @@ int transfer_segment(int *spi_fd)
 			}
 
 			// Unpack payload if valid
-			
+			unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &frame_packet[HEADER_SIZE]);
 		}
 
 	} while (discard_packet == 1);
 
+	// Recieve valid packets until entire segment is transferred
+	while(packet_num + N_PACKETS < 60)
+	{
+		// Read N_PACKETS frame packets
+		status = read(*spi_fd, n_frame_packet, N_PACKET_SIZE);
+		if(status != N_PACKET_SIZE) pabort("did not recieve spi message");
 
+		// Extract data from  N_PACKETS packets
+		for(uint8_t i = 0; i < N_PACKETS; i++)
+		{
+			// Check packet number
+			byte_ind = i*PACKET_SIZE;
+			read_packet_num(n_frame_packet[byte_ind], n_frame_packet[byte_ind+1], &packet_num);
+			if(packet_num != expected_packet_num)
+			{
+				printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
+				if(packet_num>=35) save_pgm_file();
+				return -1;
+			}
+			expected_packet_num++;
+
+			// Unpack payload
+			unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &n_frame_packet[HEADER_SIZE + byte_ind]);
+		}
+
+	}
 
 /*
 
@@ -563,7 +566,6 @@ int main(int argc, char *argv[])
 	printf("===SPI CONFIG===\n", rd_mode);
 	printf("Device: %s\n", spi_device);
 	printf("Mode: %d\nBits per Word: %d\nClock: %d MHz\n", rd_mode, rd_bits, rd_speed/1000000);
-	printf("Delay: %d\nDeselect: %d\n", delay, deselect);
 
 
 	///=====================ENGAGE VSYNC MODE=====================///
