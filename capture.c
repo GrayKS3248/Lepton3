@@ -78,7 +78,7 @@ static const uint8_t bits = 8;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
 // The highest allowed value is 20 MHz.
-static const uint32_t speed = 18000000;
+static const uint32_t speed = 19000000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -89,7 +89,7 @@ In video format mode RGB888, there are 244 bytes per frame packet. */
 
 /* The number of packets to recieve in a single transfer after
 synchronization has occured */
-#define N_PACKETS (20)
+#define N_PACKETS (24)
 
 /* The number of bytes in N_PACKET frame packets */
 #define N_PACKET_SIZE (PACKET_SIZE * N_PACKETS)
@@ -98,6 +98,7 @@ synchronization has occured */
 The first bit of the ID field is always zero.
 The next three bits are the TTT bits.
 For all packets except for packet number 20, the TTT bits are ignored.
+The TTT bits are bits 1-3.
 On packet 20, the TTT bits encode the segment number (1,2,3,4) of itself,
 the previous 19 packets, and packets 21-59. If the segment number is 0,
 the segment is invalid and the entire segment is discarded.
@@ -129,6 +130,85 @@ for calculation of the CRC. */
 static uint16_t frame[120][160] = { 0 };
 
 
+///===========================LEPTON COMMAND FUNCTIONS===========================///
+/**
+**/
+int get_lepton_status(void)
+{
+	// Open I2C port
+	LEP_CAMERA_PORT_DESC_T lepton_port;
+	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	if(status != LEP_OK) return -1;
+
+	// Check status
+	LEP_STATUS_T sys_status;
+	status = LEP_GetSysStatus(&lepton_port, &sys_status);
+	if(status != LEP_OK) return -1;
+
+	// Read status
+	if(sys_status.camStatus != LEP_SYSTEM_READY) return -1;
+
+	// 0 on success
+	return 0;
+}
+
+
+/**
+**/
+int wait_until_ready(void)
+{
+	int status = get_lepton_status();
+	int count = 0;
+	while(status != 0)
+	{
+		// Wait for 1s then poll status again
+		usleep(1000000);
+		status = get_lepton_status();
+		printf("...");
+		fflush(stdout);
+
+		// Failure if the wait time is greater than 10s
+		count++;
+		if(count >= 10) return -1;
+	}
+
+	// 0 on success
+	return 0;
+}
+
+
+/**
+**/
+int reboot_lepton(void)
+{
+	printf("===BOOTING===\n");
+
+	// Open I2C port
+	LEP_CAMERA_PORT_DESC_T lepton_port;
+	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	if(status != LEP_OK) return -1;
+
+	// Reboot
+	status = LEP_RunOemReboot(&lepton_port);
+	printf("...", status);
+	fflush(stdout);
+	while(status != LEP_OK)
+	{
+		usleep(1000000);
+		status = LEP_RunOemReboot(&lepton_port);
+		printf("...", status);
+		fflush(stdout);
+	}
+
+	// Wait until ready
+	usleep(1000000);
+	int ready = wait_until_ready();
+	if(ready != 0) return -1;
+	printf(" SYSTEM READY\n");
+	return 0;
+}
+
+
 /**
 **/
 int init_vsync(void)
@@ -149,42 +229,6 @@ int init_vsync(void)
 		status = LEP_SetOemGpioMode(&lepton_port, LEP_OEM_GPIO_MODE_VSYNC);
 		if(status != LEP_OK) return -1;
 	}
-
-	// 0 on success
-	return 0;
-}
-
-
-/**
-**/
-int reboot_lepton(void)
-{
-	// Open I2C port
-	LEP_CAMERA_PORT_DESC_T lepton_port;
-	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
-	if(status != LEP_OK) return -1;
-
-	// Reboot
-	status = LEP_RunOemReboot(&lepton_port);
-	if(status != LEP_OK) return -1;
-
-	// 0 on success
-	return -1;
-}
-
-
-/**
-**/
-int get_lepton_status(void)
-{
-	// Open I2C port
-	LEP_CAMERA_PORT_DESC_T lepton_port;
-	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
-	if(status != LEP_OK) return -1;
-
-	// Ping the camera
-	status = LEP_RunSysPing(&lepton_port);
-	if(status != LEP_OK) return -1;
 
 	// 0 on success
 	return 0;
@@ -217,6 +261,33 @@ int set_video_format_raw14(void)
 }
 
 
+/**
+**/
+int enable(void)
+{
+	// Open I2C port
+	LEP_CAMERA_PORT_DESC_T lepton_port;
+	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+
+	// Check the current video format
+	LEP_OEM_VIDEO_OUTPUT_FORMAT_E format = LEP_END_VIDEO_OUTPUT_FORMAT;
+	LEP_RESULT status = LEP_GetOemVideoOutputFormat(&lepton_port, &format);
+	if(status != LEP_OK) return -1;
+
+	// Set RAW14 as video format
+	if(format != LEP_VIDEO_OUTPUT_FORMAT_RAW14)
+	{
+		format = LEP_VIDEO_OUTPUT_FORMAT_RAW14;
+		LEP_RESULT status = LEP_SetOemVideoOutputFormat(&lepton_port, format);
+		if(status != LEP_OK) return -1;
+	}
+
+	// 0 on success
+	return 0;
+}
+
+
+///===========================FRAME STREAM AND SAVE FUNCTIONS===========================///
 /**
 **/
 void save_pgm_file(void)
@@ -292,6 +363,16 @@ void read_packet_num(uint8_t byte_0, uint8_t byte_1, uint16_t *packet_num)
 
 /**
 **/
+void read_segment_num(uint8_t byte_0, uint16_t *segment_num)
+{
+	*segment_num = (uint16_t)byte_0; //first 8 bits
+	*segment_num = *segment_num & 0x70; // isolate bits 1-3
+	*segment_num = *segment_num >> 4; // push bits 1-3 to the end
+}
+
+
+/**
+**/
 void unpack_raw14_payload(uint16_t packet_num, uint8_t payload_size, uint8_t *payload)
 {
 	// Get the row and col number from the packet number
@@ -320,15 +401,14 @@ void unpack_raw14_payload(uint16_t packet_num, uint8_t payload_size, uint8_t *pa
 **/
 int transfer_segment(int *spi_fd)
 {
-	// Packet buffers
 	uint8_t frame_packet[PACKET_SIZE];
 	uint8_t n_frame_packet[N_PACKET_SIZE];
 	int status;
-	uint8_t discard_packet;
 	uint16_t num_discard = 0;
 	uint16_t byte_ind;
-	uint16_t expected_packet_num = 1;
-	uint16_t packet_num;
+	uint16_t expected_packet_num;
+	uint16_t packet_num = 65535;
+	uint16_t segment_num;
 
 	// Recieve discard packets until the first valid packet is detected
 	do {
@@ -337,29 +417,29 @@ int transfer_segment(int *spi_fd)
 		if(status != PACKET_SIZE) pabort("did not recieve spi message");
 
 		// Determine if the frame packet is valid
-		discard_packet = (frame_packet[0] & 0x0f) == 0x0f;
-		if(discard_packet)
+		if((frame_packet[0] & 0x0f) == 0x0f)
 		{
 			num_discard++;
+			continue;
 		}
 
 		// If the packet is valid, read the packet number
-		else
+		read_packet_num(frame_packet[0], frame_packet[1], &packet_num);
+
+		// Ensure valid packet number
+		if(packet_num != 0)
 		{
-			read_packet_num(frame_packet[0], frame_packet[1], &packet_num);
-
-			// Ensure valid packet number
-			if(packet_num != 0)
-			{
-				printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
-				return -1;
-			}
-
-			// Unpack payload if valid
-			unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &frame_packet[HEADER_SIZE]);
+			printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
+			return -1;
 		}
 
-	} while (discard_packet == 1);
+		// Unpack payload if valid
+		unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &frame_packet[HEADER_SIZE]);
+
+		// Set the expected packet number
+		expected_packet_num = 1;
+
+	} while (packet_num == 65535);
 
 	// Recieve valid packets until entire segment is transferred
 	while(packet_num + N_PACKETS < 60)
@@ -374,107 +454,27 @@ int transfer_segment(int *spi_fd)
 			// Check packet number
 			byte_ind = i*PACKET_SIZE;
 			read_packet_num(n_frame_packet[byte_ind], n_frame_packet[byte_ind+1], &packet_num);
+
+			// Check for correct packet number
 			if(packet_num != expected_packet_num)
 			{
 				printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
 				if(packet_num>=35) save_pgm_file();
 				return -1;
 			}
+
+			// Read segment number
+			if(packet_num==20) read_segment_num(n_frame_packet[byte_ind], &segment_num);
+
+			// Update expected packet number
 			expected_packet_num++;
 
 			// Unpack payload
 			unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &n_frame_packet[HEADER_SIZE + byte_ind]);
 		}
-
 	}
 
-/*
-
-
-
-
-
-	// Recieve 60 valid packets
-	while(packet_num < 60)
-	{
-		// Calculate the byte index of the current packet in the frame segment
-		//byte_index = packet_num*FRAME_PACKET_SIZE;
-
-		// Transfer one frame packet. Status gives the number of bytes
-		// recieved.
-		//status = read(*spi_fd, frame_segment+byte_index, FRAME_PACKET_SIZE);
-		status = read(*spi_fd, frame_packet, FRAME_PACKET_SIZE);
-		//status = ioctl(*spi_fd, SPI_IOC_MESSAGE(1), &mesg);
-		if (status < 1)
-		{
-			// status < 1 indicates transfer failure
-			pabort("can't send spi message");
-		}
-
-		// Check if the recieved packet is a discard packet.
-		// If it is, ignore the packet and continue to the next.
-		discard_packet = (frame_packet[0] & 0x0f) == 0x0f;
-		//discard_packet = (frame_segment[byte_index] & 0x0f) == 0x0f;
-		if(discard_packet)
-		{
-			num_packets_discarded++;
-			continue;
-		}
-
-		// Retrieve the packet num by extracting the last
-		// 12 bits of the frame ID
-		packet_num = frame_packet[0]; //0x00_(byte 0)
-		//packet_num = frame_segment[byte_index]; //0x00_(byte 0)
-		packet_num = packet_num << 8; //0x(byte 0)_00
-		packet_num = packet_num | frame_packet[1]; //0x(byte 0)_(byte 1)
-		packet_num = packet_num & 0x0fff; //0x0(bits 4-7 of byte 0)_(byte 1)
-		row = packet_num / 2;
-
-		// Synchronization error detection
-		if (expected_packet_number != packet_num)
-		{
-			double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
-			if(expected_packet_number>20)
-			{
-				printf("Segement number: %d\n", segment_num);
-			}
-			printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_number, packet_num);
-			printf("Time spent transferring packets: %1.3fms\n", 1000.*elapsed);
-			if(expected_packet_number>=25) save_pgm_file();
-			return -1;
-		}
-
-		// If desync is not detected, extract packet data
-		// If this is packet number 20, extract the TTT bits.
-		// These encode the packet stream's segment number
-		if (packet_num == 20)
-		{
-			segment_num = frame_packet[0]; //first 8 bits
-			//segment_num = frame_segment[byte_index]; //first 8 bits
-			segment_num = segment_num & 0x70; // isolate bits 1-3
-			segment_num = segment_num >> 4; // push bits 1-3 to the end
-		}
-
-		// Unpack payload
-		if(col == 160) col = 0;
-		for(int i=FRAME_PACKET_ID_SIZE+FRAME_PACKET_CRC_SIZE; i<FRAME_PACKET_SIZE; i+=2)
-		{
-			// Extract pixel value
-			pixel_val = frame_packet[i];
-			pixel_val = pixel_val << 8;
-			pixel_val = pixel_val | frame_packet[i+1];
-			pixel_val = pixel_val & 0x3fff;
-
-			// Add pixel to frame
-			frame[row][col] = pixel_val;
-			col++;
-		}
-
-		// Iterate the expected packet number for the next recieve packet loop
-		expected_packet_number++;
-
-	}
-*/
+	// 0 on success
 	return 0;
 
 }
@@ -486,6 +486,10 @@ int main(int argc, char *argv[])
 	uint8_t rd_bits;
 	uint32_t rd_speed;
 	int status = 0;
+
+
+	///=====================REBOOT CAMERA=====================///
+	reboot_lepton();
 
 
 	///=====================INITIALIZE SPI DEVICE=====================///
@@ -563,17 +567,29 @@ int main(int argc, char *argv[])
 	}
 
 	// print configure SPI settings
-	printf("===SPI CONFIG===\n", rd_mode);
+	printf("\n\n===SPI CONFIG===\n", rd_mode);
 	printf("Device: %s\n", spi_device);
 	printf("Mode: %d\nBits per Word: %d\nClock: %d MHz\n", rd_mode, rd_bits, rd_speed/1000000);
 
 
-	///=====================ENGAGE VSYNC MODE=====================///
+	///=====================CAMERA CONFIGURATION=====================///
+	// Set camera GPIO mode to VSYNC
 	status = init_vsync();
 	if(status==0)
 	{
-		printf("\n\n===VSYNC CONFIG===\n");
+		printf("\n\n===CAMERA CONFIG===\n");
 		printf("Lepton GPIO Mode: LEP_OEM_GPIO_MODE_VSYNC\n");
+	}
+
+	// Set camera video output format to RAW14
+	status = set_video_format_raw14();
+	if(status==0)
+	{
+		printf("Video output format: RAW14\n");
+	}
+	else
+	{
+		pabort("failed to set video format to RAW14");
 	}
 
 
@@ -608,25 +624,16 @@ int main(int argc, char *argv[])
 
 
 	///=====================IMAGE CAPTURE OPERATIONS=====================///
-	// Ensure Lepton camera status is good, then continue
-	status = get_lepton_status();
+	// Ensure Lepton camera status is good
+	printf("\n\n===CAMERA STATUS===\n");
+	status = wait_until_ready();
 	if(status==0)
 	{
-		printf("\n\n===CAMERA STATUS===\n");
-		printf("Camera ping returned success\n");
+		printf("Camera status good\n");
 	}
 	else
 	{
-		pabort("camera ping returned failure");
-	}
-	status = set_video_format_raw14();
-	if(status==0)
-	{
-		printf("Video output format: RAW14\n");
-	}
-	else
-	{
-		pabort("failed to set video format to RAW14");
+		pabort("camera status returned failure");
 	}
 
 	// Variables used for VSYNC pulse detection
@@ -640,7 +647,7 @@ int main(int argc, char *argv[])
 
 	// Poll GPIO chip 0, line 82 (Header: 7J1, Pin: 38) for next VSYNC pulse
 	// The VSYNC pulse rising edge indicates start of new frame time
-	printf("\n\n===READING DATA===\n");
+	printf("\n\n===CAPTURING===\n");
 	start_time = clock();
 	for(int i = 0; i < 50000; i++)
 	{
