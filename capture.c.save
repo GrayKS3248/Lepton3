@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2014, Pure Engineering LLC
+	Copyright (c) 2014, Pure Engineering LLC
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -24,7 +24,6 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-// C libs
 #include <stdint.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -34,23 +33,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <limits.h>
 #include <time.h>
 
-// System libs
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 
-// Linux kernel libs
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
 #include <linux/gpio.h>
 #include <linux/i2c-dev.h>
 
-// Lepton SDK libs
 #include "LEPTON_Types.h"
 #include "LEPTON_SDK.h"
 #include "LEPTON_OEM.h"
 #include "LEPTON_SYS.h"
 
-
-/**
+/dma**
 **/
 static void pabort(const char *s)
 {
@@ -389,9 +385,7 @@ void unpack_raw14_payload(uint16_t packet_num, uint8_t payload_size, uint8_t *pa
 int transfer_segment(int *spi_fd)
 {
 	int status;
-	uint8_t i;
-	uint8_t num_packets_left;
-	//uint16_t num_discard = 0;
+	uint16_t num_discard = 0;
 	uint16_t n_packet_ind;
 	uint16_t packet_ind;
 	uint16_t expected_packet_num;
@@ -402,14 +396,14 @@ int transfer_segment(int *spi_fd)
 	do {
 		// Read a single frame packet
 		status = read(*spi_fd, &seg_buf[0], PACKET_SIZE);
-		//if(status != PACKET_SIZE) pabort("did not recieve spi message");
+		if(status != PACKET_SIZE) pabort("did not recieve spi message");
 
 		// Determine if the frame packet is valid
-		if((seg_buf[0] & 0x0f) == 0x0f) continue;
-		/*{
+		if((seg_buf[0] & 0x0f) == 0x0f)
+		{
 			num_discard++;
 			continue;
-		}*/
+		}
 
 		// If the packet is valid, read the packet number
 		//read_packet_num(seg_buf[0], seg_buf[1], &packet_num);
@@ -437,10 +431,10 @@ int transfer_segment(int *spi_fd)
 	{
 		// Read N_PACKETS frame packets
 		status = read(*spi_fd, &seg_buf[packet_ind], N_PACKET_SIZE);
-		//if(status != N_PACKET_SIZE) pabort("did not recieve spi message");
+		if(status != N_PACKET_SIZE) pabort("did not recieve spi message");
 
 		// Extract data from N_PACKETS packets
-		for(i = 0; i < N_PACKETS; i++)
+		for(uint8_t i = 0; i < N_PACKETS; i++)
 		{
 			// Check for correct packet number
 			//read_packet_num(seg_buf[packet_ind], seg_buf[packet_ind+1], &packet_num);
@@ -465,47 +459,8 @@ int transfer_segment(int *spi_fd)
 		}
 	}
 
-	// Grab the last set of packets
-	num_packets_left = 59-packet_num;
-	status = read(*spi_fd, &seg_buf[packet_ind], PACKET_SIZE*num_packets_left);
-	//if(status != N_PACKET_SIZE) pabort("did not recieve spi message");
-
-	// Extract data the last set of packets
-	for(i = 0; i < num_packets_left; i++)
-	{
-		// Check for correct packet number
-		//read_packet_num(seg_buf[packet_ind], seg_buf[packet_ind+1], &packet_num);
-		packet_num = seg_buf[packet_ind + 1];
-		if(packet_num != expected_packet_num)
-		{
-			printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
-			//if(expected_packet_num>=45) save_pgm_file();
-			return -1;
-		}
-
-		// Read segment number
-		//if(packet_num==20) read_segment_num(seg_buf[packet_ind], &segment_num);
-
-		// Unpack payload
-		//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE + packet_ind]);
-
-		// Update expected packet number and the index of the next packet
-		// in the segment buffer
-		expected_packet_num++;
-		packet_ind += PACKET_SIZE;
-	}
-
-	// Unpack image
-	printf("Success! Saving...\n");
-	for(i = 0; i < 60; i++)
-	{
-		//read_segment_num(seg_buf[50*PAYLOAD_SIZE], &segment_num)
-		packet_ind = PACKET_SIZE*i;
-		unpack_raw14_payload(i, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE+packet_ind]);
-	}
-	save_pgm_file();
-
 	// 0 on success
+	printf("Success! (%d)\n", expected_packet_num-1);
 	return 0;
 
 }

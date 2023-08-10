@@ -3,11 +3,11 @@ OBJ:=$(SRC:%.c=%.o)
 OUT:=$(SRC:%.c=%)
 
 CC=gcc
-CFLAGS=-O3
+CFLAGS=-O2
 INC=leptonSDKEmb32PUB/
-LINK=leptonSDKEmb32PUB/Debug
+LINK=leptonSDKEmb32PUB/Debug/
 LIB=LEPTON_SDK
-LINKERFLAG=-static
+LINKERFLAG=
 
 
 .PHONY: all clean
