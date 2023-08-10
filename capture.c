@@ -78,8 +78,8 @@ static const uint8_t mode = 3;
 static const uint8_t bits = 8;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
-// The highest allowed value is 20 MHz.
-static const uint32_t speed = 23000000;
+// The highest allowed value is 23 MHz.
+static const uint32_t speed = 23500000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -130,8 +130,8 @@ for calculation of the CRC. */
 // Each pixel is an unsigned 16 bit integer
 static uint16_t frame[120][160] = { 0 };
 static uint8_t seg_buf[PACKET_SIZE*60];
-static uint8_t frame_packet[PACKET_SIZE];
-static uint8_t n_frame_packet[N_PACKET_SIZE];
+//static uint8_t frame_packet[PACKET_SIZE];
+//static uint8_t n_frame_packet[N_PACKET_SIZE];
 
 
 ///===========================LEPTON COMMAND FUNCTIONS===========================///
@@ -386,7 +386,8 @@ int transfer_segment(int *spi_fd)
 {
 	int status;
 	uint16_t num_discard = 0;
-	uint16_t byte_ind;
+	uint16_t n_packet_ind;
+	uint16_t packet_ind;
 	uint16_t expected_packet_num;
 	uint16_t packet_num = 65535;
 	uint16_t segment_num;
@@ -405,51 +406,56 @@ int transfer_segment(int *spi_fd)
 		}
 
 		// If the packet is valid, read the packet number
-		read_packet_num(seg_buf[0], seg_buf[1], &packet_num);
+		//read_packet_num(seg_buf[0], seg_buf[1], &packet_num);
+		packet_num = seg_buf[1];
 
 		// Ensure valid packet number
 		if(packet_num != 0)
 		{
-			printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
+			//printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
 			return -1;
 		}
 
 		// Unpack payload if valid
-		unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE]);
+		//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE]);
 
-		// Set the expected packet number
+		// Set the expected packet number and the index of the next packet
+		// in the segment buffer
 		expected_packet_num = 1;
+		packet_ind = PACKET_SIZE;
 
-	} while (packet_num == 65535);
+	} while (packet_num != 0);
 
 	// Recieve valid packets until entire segment is transferred
 	while(packet_num + N_PACKETS < 60)
 	{
 		// Read N_PACKETS frame packets
-		status = read(*spi_fd, n_frame_packet, N_PACKET_SIZE);
+		status = read(*spi_fd, &seg_buf[packet_ind], N_PACKET_SIZE);
 		if(status != N_PACKET_SIZE) pabort("did not recieve spi message");
 
-		// Extract data from  N_PACKETS packets
+		// Extract data from N_PACKETS packets
 		for(uint8_t i = 0; i < N_PACKETS; i++)
 		{
 			// Check for correct packet number
-			byte_ind = i*PACKET_SIZE;
-			read_packet_num(n_frame_packet[byte_ind], n_frame_packet[byte_ind+1], &packet_num);
+			//read_packet_num(seg_buf[packet_ind], seg_buf[packet_ind+1], &packet_num);
+			packet_num = seg_buf[packet_ind + 1];
 			if(packet_num != expected_packet_num)
 			{
 				printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
-				if(expected_packet_num>=45) save_pgm_file();
+				//if(expected_packet_num>=45) save_pgm_file();
 				return -1;
 			}
 
 			// Read segment number
-			if(packet_num==20) read_segment_num(n_frame_packet[byte_ind], &segment_num);
-
-			// Update expected packet number
-			expected_packet_num++;
+			//if(packet_num==20) read_segment_num(seg_buf[packet_ind], &segment_num);
 
 			// Unpack payload
-			unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &n_frame_packet[HEADER_SIZE + byte_ind]);
+			//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE + packet_ind]);
+
+			// Update expected packet number and the index of the next packet
+			// in the segment buffer
+			expected_packet_num++;
+			packet_ind += PACKET_SIZE;
 		}
 	}
 
@@ -635,6 +641,13 @@ int main(int argc, char *argv[])
 	start_time = clock();
 	for(int i = 0; i < 50000; i++)
 	{
+		/*status = transfer_segment(&spi_fd);
+		if(status<0)
+		{
+			printf("Waiting for desync reset...\n");
+			usleep(185000);
+		}*/
+
 		// Retrieve data from GPIO line handle
 		status = ioctl(gpio_line_handle.fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &gpio_line_data);
 
@@ -673,7 +686,6 @@ int main(int argc, char *argv[])
 			start_time = clock();
 		}
 		prev_vsync_val = curr_vsync_val;
-
 	}
 
 
