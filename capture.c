@@ -79,7 +79,7 @@ static const uint8_t bits = 8;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
 // The highest allowed value is 20 MHz.
-static const uint32_t speed = 19000000;
+static const uint32_t speed = 24000000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -414,7 +414,7 @@ int transfer_segment(int *spi_fd)
 		}
 
 		// Unpack payload if valid
-		//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &frame_packet[HEADER_SIZE]);
+		unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &frame_packet[HEADER_SIZE]);
 
 		// Set the expected packet number
 		expected_packet_num = 1;
@@ -450,7 +450,7 @@ int transfer_segment(int *spi_fd)
 			expected_packet_num++;
 
 			// Unpack payload
-			//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &n_frame_packet[HEADER_SIZE + byte_ind]);
+			unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &n_frame_packet[HEADER_SIZE + byte_ind]);
 		}
 	}
 
@@ -651,27 +651,15 @@ int main(int argc, char *argv[])
 		curr_vsync_val = gpio_line_data.values[0];
 		if(curr_vsync_val==1 && prev_vsync_val==0)
 		{
+
+			// Transfer segment
+			status = transfer_segment(&spi_fd);
+
+			// Track VSYNC pulses
 			end_time = clock();
-
-			// Create new process for spi transfer
-			pid = fork();
-			if (pid < 0) pabort("fork failed");
-
-			// Child process does SPI transfer
-			else if (pid == 0)
-			{
-				status = transfer_segment(&spi_fd); // If VSYNC edge is detected, transfer segment
-				exit(EXIT_SUCCESS);
-			}
-
-			// Parent process tracks VSYNC periods
-			else
-			{
-				elapsed_time = (double)(end_time-start_time) / CLOCKS_PER_SEC;
-				printf("Frame pulse: %d. Time spent polling: %1.3fms.\n", vsync_pulse_num, 1000.0*elapsed_time);
-				vsync_pulse_num++;
-				waitpid(pid, &pid_status, 0);
-			}
+			elapsed_time = (double)(end_time-start_time) / CLOCKS_PER_SEC;
+			printf("Frame pulse: %d. Time spent polling: %1.3fms.\n", vsync_pulse_num, 1000.0*elapsed_time);
+			vsync_pulse_num++;
 
 			// If dsync occurs, wait for frame to time out to reset.
 			if(status<0)
