@@ -79,7 +79,7 @@ static const uint8_t bits = 8;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
 // The highest allowed value is 20 MHz.
-static const uint32_t speed = 24000000;
+static const uint32_t speed = 23000000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -90,7 +90,7 @@ In video format mode RGB888, there are 244 bytes per frame packet. */
 
 /* The number of packets to recieve in a single transfer after
 synchronization has occured */
-#define N_PACKETS (24)
+#define N_PACKETS (14)
 
 /* The number of bytes in N_PACKET frame packets */
 #define N_PACKET_SIZE (PACKET_SIZE * N_PACKETS)
@@ -129,6 +129,9 @@ for calculation of the CRC. */
 // Create a buffer to hold a single frame. Each frame is 120x160 pixels.
 // Each pixel is an unsigned 16 bit integer
 static uint16_t frame[120][160] = { 0 };
+static uint8_t seg_buf[PACKET_SIZE*60];
+static uint8_t frame_packet[PACKET_SIZE];
+static uint8_t n_frame_packet[N_PACKET_SIZE];
 
 
 ///===========================LEPTON COMMAND FUNCTIONS===========================///
@@ -195,14 +198,14 @@ int reboot_lepton(void)
 	fflush(stdout);
 	while(status != LEP_OK)
 	{
-		usleep(4000000);
+		usleep(2000000);
 		status = LEP_RunOemReboot(&lepton_port);
 		printf("...", status);
 		fflush(stdout);
 	}
 
 	// Wait until ready
-	usleep(4000000);
+	usleep(2000000);
 	int ready = wait_until_ready();
 	if(ready != 0) return -1;
 	printf(" SYSTEM READY\n");
@@ -381,8 +384,6 @@ void unpack_raw14_payload(uint16_t packet_num, uint8_t payload_size, uint8_t *pa
 **/
 int transfer_segment(int *spi_fd)
 {
-	uint8_t frame_packet[PACKET_SIZE];
-	uint8_t n_frame_packet[N_PACKET_SIZE];
 	int status;
 	uint16_t num_discard = 0;
 	uint16_t byte_ind;
@@ -393,18 +394,18 @@ int transfer_segment(int *spi_fd)
 	// Recieve discard packets until the first valid packet is detected
 	do {
 		// Read a single frame packet
-		status = read(*spi_fd, frame_packet, PACKET_SIZE);
+		status = read(*spi_fd, &seg_buf[0], PACKET_SIZE);
 		if(status != PACKET_SIZE) pabort("did not recieve spi message");
 
 		// Determine if the frame packet is valid
-		if((frame_packet[0] & 0x0f) == 0x0f)
+		if((seg_buf[0] & 0x0f) == 0x0f)
 		{
 			num_discard++;
 			continue;
 		}
 
 		// If the packet is valid, read the packet number
-		read_packet_num(frame_packet[0], frame_packet[1], &packet_num);
+		read_packet_num(seg_buf[0], seg_buf[1], &packet_num);
 
 		// Ensure valid packet number
 		if(packet_num != 0)
@@ -414,7 +415,7 @@ int transfer_segment(int *spi_fd)
 		}
 
 		// Unpack payload if valid
-		unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &frame_packet[HEADER_SIZE]);
+		unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE]);
 
 		// Set the expected packet number
 		expected_packet_num = 1;
@@ -431,15 +432,13 @@ int transfer_segment(int *spi_fd)
 		// Extract data from  N_PACKETS packets
 		for(uint8_t i = 0; i < N_PACKETS; i++)
 		{
-			// Check packet number
+			// Check for correct packet number
 			byte_ind = i*PACKET_SIZE;
 			read_packet_num(n_frame_packet[byte_ind], n_frame_packet[byte_ind+1], &packet_num);
-
-			// Check for correct packet number
 			if(packet_num != expected_packet_num)
 			{
 				printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
-				if(packet_num>=35) save_pgm_file();
+				if(expected_packet_num>=45) save_pgm_file();
 				return -1;
 			}
 
@@ -455,6 +454,7 @@ int transfer_segment(int *spi_fd)
 	}
 
 	// 0 on success
+	printf("Success! (%d)\n", expected_packet_num-1);
 	return 0;
 
 }
