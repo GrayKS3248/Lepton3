@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <time.h>
 
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
@@ -162,7 +163,7 @@ int wait_until_ready(void)
 	while(status != 0)
 	{
 		// Wait for 1s then poll status again
-		usleep(1000000);
+		usleep(500000);
 		status = get_lepton_status();
 		printf("...");
 		fflush(stdout);
@@ -194,14 +195,14 @@ int reboot_lepton(void)
 	fflush(stdout);
 	while(status != LEP_OK)
 	{
-		usleep(1000000);
+		usleep(4000000);
 		status = LEP_RunOemReboot(&lepton_port);
 		printf("...", status);
 		fflush(stdout);
 	}
 
 	// Wait until ready
-	usleep(1000000);
+	usleep(4000000);
 	int ready = wait_until_ready();
 	if(ready != 0) return -1;
 	printf(" SYSTEM READY\n");
@@ -261,30 +262,9 @@ int set_video_format_raw14(void)
 }
 
 
+///===========================SPI FUNCTIONS===========================///
 /**
 **/
-int enable(void)
-{
-	// Open I2C port
-	LEP_CAMERA_PORT_DESC_T lepton_port;
-	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
-
-	// Check the current video format
-	LEP_OEM_VIDEO_OUTPUT_FORMAT_E format = LEP_END_VIDEO_OUTPUT_FORMAT;
-	LEP_RESULT status = LEP_GetOemVideoOutputFormat(&lepton_port, &format);
-	if(status != LEP_OK) return -1;
-
-	// Set RAW14 as video format
-	if(format != LEP_VIDEO_OUTPUT_FORMAT_RAW14)
-	{
-		format = LEP_VIDEO_OUTPUT_FORMAT_RAW14;
-		LEP_RESULT status = LEP_SetOemVideoOutputFormat(&lepton_port, format);
-		if(status != LEP_OK) return -1;
-	}
-
-	// 0 on success
-	return 0;
-}
 
 
 ///===========================FRAME STREAM AND SAVE FUNCTIONS===========================///
@@ -434,7 +414,7 @@ int transfer_segment(int *spi_fd)
 		}
 
 		// Unpack payload if valid
-		unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &frame_packet[HEADER_SIZE]);
+		//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &frame_packet[HEADER_SIZE]);
 
 		// Set the expected packet number
 		expected_packet_num = 1;
@@ -470,7 +450,7 @@ int transfer_segment(int *spi_fd)
 			expected_packet_num++;
 
 			// Unpack payload
-			unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &n_frame_packet[HEADER_SIZE + byte_ind]);
+			//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &n_frame_packet[HEADER_SIZE + byte_ind]);
 		}
 	}
 
@@ -645,6 +625,10 @@ int main(int argc, char *argv[])
 	clock_t start_time, end_time;
 	double elapsed_time;
 
+	// Variables used to fork process for SPI transfer
+	pid_t pid;
+	int pid_status;
+
 	// Poll GPIO chip 0, line 82 (Header: 7J1, Pin: 38) for next VSYNC pulse
 	// The VSYNC pulse rising edge indicates start of new frame time
 	printf("\n\n===CAPTURING===\n");
@@ -668,12 +652,26 @@ int main(int argc, char *argv[])
 		if(curr_vsync_val==1 && prev_vsync_val==0)
 		{
 			end_time = clock();
-			status = transfer_segment(&spi_fd); // If VSYNC edge is detected, transfer segment
 
-			// Keep track of VSYNC servicing periods
-			elapsed_time = (double)(end_time-start_time) / CLOCKS_PER_SEC;
-			printf("Frame pulse: %d. Time spent polling: %1.3fms.\n", vsync_pulse_num, 1000.0*elapsed_time);
-			vsync_pulse_num++;
+			// Create new process for spi transfer
+			pid = fork();
+			if (pid < 0) pabort("fork failed");
+
+			// Child process does SPI transfer
+			else if (pid == 0)
+			{
+				status = transfer_segment(&spi_fd); // If VSYNC edge is detected, transfer segment
+				exit(EXIT_SUCCESS);
+			}
+
+			// Parent process tracks VSYNC periods
+			else
+			{
+				elapsed_time = (double)(end_time-start_time) / CLOCKS_PER_SEC;
+				printf("Frame pulse: %d. Time spent polling: %1.3fms.\n", vsync_pulse_num, 1000.0*elapsed_time);
+				vsync_pulse_num++;
+				waitpid(pid, &pid_status, 0);
+			}
 
 			// If dsync occurs, wait for frame to time out to reset.
 			if(status<0)
@@ -695,6 +693,5 @@ int main(int argc, char *argv[])
 	close(spi_fd);
 	close(gpio_fd);
 	close(gpio_line_handle.fd);
-
 	return 0;
 }
