@@ -83,7 +83,7 @@ static const uint8_t bits = 8;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
 // The highest allowed value is 23 MHz.
-static const uint32_t speed = 23500000;
+static const uint32_t speed = 24000000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -94,7 +94,7 @@ In video format mode RGB888, there are 244 bytes per frame packet. */
 
 /* The number of packets to recieve in a single transfer after
 synchronization has occured */
-#define N_PACKETS (24)
+#define N_PACKETS (59)
 
 /* The number of bytes in N_PACKET frame packets */
 #define N_PACKET_SIZE (PACKET_SIZE * N_PACKETS)
@@ -391,7 +391,6 @@ int transfer_segment(int *spi_fd)
 	int status;
 	uint8_t i;
 	uint8_t num_packets_left;
-	//uint16_t num_discard = 0;
 	uint16_t n_packet_ind;
 	uint16_t packet_ind;
 	uint16_t expected_packet_num;
@@ -400,30 +399,13 @@ int transfer_segment(int *spi_fd)
 
 	// Recieve discard packets until the first valid packet is detected
 	do {
-		// Read a single frame packet
+		// Read a single frame packet and determine validity
 		status = read(*spi_fd, &seg_buf[0], PACKET_SIZE);
-		//if(status != PACKET_SIZE) pabort("did not recieve spi message");
-
-		// Determine if the frame packet is valid
 		if((seg_buf[0] & 0x0f) == 0x0f) continue;
-		/*{
-			num_discard++;
-			continue;
-		}*/
 
 		// If the packet is valid, read the packet number
-		//read_packet_num(seg_buf[0], seg_buf[1], &packet_num);
 		packet_num = seg_buf[1];
-
-		// Ensure valid packet number
-		if(packet_num != 0)
-		{
-			//printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
-			return -1;
-		}
-
-		// Unpack payload if valid
-		//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE]);
+		if(packet_num != 0) return -1;
 
 		// Set the expected packet number and the index of the next packet
 		// in the segment buffer
@@ -432,31 +414,22 @@ int transfer_segment(int *spi_fd)
 
 	} while (packet_num != 0);
 
-	// Recieve valid packets until entire segment is transferred
+	// Recieve valid packets in N PACKET chunks
 	while(packet_num + N_PACKETS < 60)
 	{
 		// Read N_PACKETS frame packets
 		status = read(*spi_fd, &seg_buf[packet_ind], N_PACKET_SIZE);
-		//if(status != N_PACKET_SIZE) pabort("did not recieve spi message");
 
 		// Extract data from N_PACKETS packets
 		for(i = 0; i < N_PACKETS; i++)
 		{
 			// Check for correct packet number
-			//read_packet_num(seg_buf[packet_ind], seg_buf[packet_ind+1], &packet_num);
 			packet_num = seg_buf[packet_ind + 1];
 			if(packet_num != expected_packet_num)
 			{
 				printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
-				//if(expected_packet_num>=45) save_pgm_file();
 				return -1;
 			}
-
-			// Read segment number
-			//if(packet_num==20) read_segment_num(seg_buf[packet_ind], &segment_num);
-
-			// Unpack payload
-			//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE + packet_ind]);
 
 			// Update expected packet number and the index of the next packet
 			// in the segment buffer
@@ -465,29 +438,20 @@ int transfer_segment(int *spi_fd)
 		}
 	}
 
-	// Grab the last set of packets
+	// Grab the last chunk of packets
 	num_packets_left = 59-packet_num;
 	status = read(*spi_fd, &seg_buf[packet_ind], PACKET_SIZE*num_packets_left);
-	//if(status != N_PACKET_SIZE) pabort("did not recieve spi message");
 
-	// Extract data the last set of packets
+	// Extract data the last chunk of  packets
 	for(i = 0; i < num_packets_left; i++)
 	{
 		// Check for correct packet number
-		//read_packet_num(seg_buf[packet_ind], seg_buf[packet_ind+1], &packet_num);
 		packet_num = seg_buf[packet_ind + 1];
 		if(packet_num != expected_packet_num)
 		{
 			printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
-			//if(expected_packet_num>=45) save_pgm_file();
 			return -1;
 		}
-
-		// Read segment number
-		//if(packet_num==20) read_segment_num(seg_buf[packet_ind], &segment_num);
-
-		// Unpack payload
-		//unpack_raw14_payload(packet_num, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE + packet_ind]);
 
 		// Update expected packet number and the index of the next packet
 		// in the segment buffer
@@ -496,18 +460,16 @@ int transfer_segment(int *spi_fd)
 	}
 
 	// Unpack image
-	printf("Success! Saving...\n");
-	for(i = 0; i < 60; i++)
-	{
-		//read_segment_num(seg_buf[50*PAYLOAD_SIZE], &segment_num)
-		packet_ind = PACKET_SIZE*i;
-		unpack_raw14_payload(i, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE+packet_ind]);
-	}
-	save_pgm_file();
+//	printf("Success! Saving...\n");
+//	for(i = 0; i < 60; i++)
+//	{
+//		packet_ind = PACKET_SIZE*i;
+//		unpack_raw14_payload(i, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE+packet_ind]);
+//	}
+//	save_pgm_file();
 
 	// 0 on success
 	return 0;
-
 }
 
 int main(int argc, char *argv[])
@@ -670,40 +632,14 @@ int main(int argc, char *argv[])
 	// Variables used for VSYNC pulse detection
 	uint8_t curr_vsync_val = 0;
 	uint8_t prev_vsync_val = 1;
-	uint16_t vsync_pulse_num = 0;
-
-	// Variables used to measure VSYNC servicing time
-	clock_t start_time, end_time;
-	double elapsed_time;
-
-	// Variables used to fork process for SPI transfer
-	pid_t pid;
-	int pid_status;
 
 	// Poll GPIO chip 0, line 82 (Header: 7J1, Pin: 38) for next VSYNC pulse
 	// The VSYNC pulse rising edge indicates start of new frame time
 	printf("\n\n===CAPTURING===\n");
-	start_time = clock();
 	for(int i = 0; i < 50000; i++)
 	{
-		/*status = transfer_segment(&spi_fd);
-		if(status<0)
-		{
-			printf("Waiting for desync reset...\n");
-			usleep(185000);
-		}*/
-
 		// Retrieve data from GPIO line handle
 		status = ioctl(gpio_line_handle.fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &gpio_line_data);
-
-		// Status < 0 indicates failure to communicate with line handle
-		if (status < 0)
-		{
-			close(spi_fd);
-			close(gpio_fd);
-			close(gpio_line_handle.fd);
-			pabort("error while polling event from GPIO");
-		}
 
 		// Detect new frame time pulse
 		curr_vsync_val = gpio_line_data.values[0];
@@ -712,23 +648,12 @@ int main(int argc, char *argv[])
 
 			// Transfer segment
 			status = transfer_segment(&spi_fd);
-
-			// Track VSYNC pulses
-			end_time = clock();
-			elapsed_time = (double)(end_time-start_time) / CLOCKS_PER_SEC;
-			printf("Frame pulse: %d. Time spent polling: %1.3fms.\n", vsync_pulse_num, 1000.0*elapsed_time);
-			vsync_pulse_num++;
-
-			// If dsync occurs, wait for frame to time out to reset.
 			if(status<0)
 			{
 				printf("Waiting for desync reset...\n");
 				usleep(185000);
 			}
-
-			// Restart the clock for the next VSYNC servicing period
 			printf("----------------------------------------------------------\n\n");
-			start_time = clock();
 		}
 		prev_vsync_val = curr_vsync_val;
 	}
