@@ -83,7 +83,7 @@ static const uint8_t bits = 8;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
 // The highest allowed value is 23 MHz.
-static const uint32_t speed = 24000000;
+static const uint32_t speed = 25000000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -269,9 +269,92 @@ int set_video_format_raw14(void)
 }
 
 
-///===========================SPI FUNCTIONS===========================///
+///===========================BITBANG SPI FUNCTIONS===========================///
 /**
 **/
+int open_gpio_write(int line, struct gpiohandle_request *rq)
+{
+ 	// Open GPIO chip and get file descriptor
+	int fd = open(gpio_device, O_WRONLY);
+	if (fd < 0) return -1;
+
+	// Request line handle for GPIO chip 0, header 7J1 at requested line
+	rq->lineoffsets[0] = line;
+	rq->lines = 1;
+	rq->flags = GPIOHANDLE_REQUEST_OUTPUT;
+	if (ioctl(fd, GPIO_GET_LINEHANDLE_IOCTL, rq) < 0) return -1;
+
+	// 0 on success
+	close(fd);
+	return 0;
+}
+
+
+/**
+**/
+int open_gpio_read(int line, struct gpiohandle_request *rq)
+{
+ 	// Open GPIO chip and get file descriptor
+	int fd = open(gpio_device, O_RDONLY);
+	if (fd < 0) return -1;
+
+	// Request line handle for GPIO chip 0, header 7J1 at requested line
+	rq->lineoffsets[0] = line;
+	rq->lines = 1;
+	rq->flags = GPIOHANDLE_REQUEST_INPUT;
+	if (ioctl(fd, GPIO_GET_LINEHANDLE_IOCTL, rq) < 0) return -1;
+
+	// 0 on success
+	close(fd);
+	return 0;
+}
+
+
+/**
+**/
+void set_gpio_high(struct gpiohandle_request *rq, struct gpiohandle_data *dat)
+{
+	// Set GPIO pin at rq high
+	dat->values[0] = 1;
+	ioctl(rq->fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, dat);
+}
+
+
+/**
+**/
+void set_gpio_low(struct gpiohandle_request *rq, struct gpiohandle_data *dat)
+{
+	// Set GPIO pin at rq low
+	dat->values[0] = 0;
+	ioctl(rq->fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, dat);
+}
+
+
+/**
+**/
+uint8_t read_gpio(struct gpiohandle_request *rq, struct gpiohandle_data *dat)
+{
+	// Read and return from rq
+	ioctl(rq->fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, dat);
+	return dat->values[0];
+}
+
+
+/**
+**/
+void read_8bit_word_spi3(uint8_t *word, struct gpiohandle_request *clk_rq, struct gpiohandle_data *clk_dat, struct gpiohandle_request *rd_rq, struct gpiohandle_data *rd_dat)
+{
+	// Read 8 bits
+	for(int i=0; i<8; i++)
+	{
+		// Data shift on falling edge
+		set_gpio_low(clk_rq, clk_dat);
+
+		// Data read on rising edge
+		set_gpio_high(clk_rq, clk_dat);
+		word[i] = read_gpio(rd_rq, rd_dat);
+	}
+}
 
 
 ///===========================FRAME STREAM AND SAVE FUNCTIONS===========================///
@@ -474,6 +557,25 @@ int transfer_segment(int *spi_fd)
 
 int main(int argc, char *argv[])
 {
+	/*struct gpiohandle_request clk_rq;
+	struct gpiohandle_data clk_dat;
+	int clk_line = 82;
+	open_gpio_write(clk_line, &clk_rq);
+
+	struct gpiohandle_request mosi_rq;
+	struct gpiohandle_data mosi_dat;
+	int mosi_line = 83;
+	open_gpio_read(mosi_line, &mosi_rq);
+
+	uint8_t word[8];
+
+	set_gpio_high(&clk_rq, &clk_dat);
+
+	read_8bit_word_spi3(word, &clk_rq, &clk_dat, &mosi_rq, &mosi_dat);
+	read_8bit_word_spi3(word, &clk_rq, &clk_dat, &mosi_rq, &mosi_dat);
+	read_8bit_word_spi3(word, &clk_rq, &clk_dat, &mosi_rq, &mosi_dat);
+	*/
+
 	///=====================LOCAL VARIABLE DECLARATION=====================///
 	uint8_t rd_mode;
 	uint8_t rd_bits;
