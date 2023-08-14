@@ -78,12 +78,12 @@ static const char *spi_device = "/dev/spidev0.0";
 */
 static const uint8_t mode = 3;
 
-// Number of bits per word. The default is 8
+// Number of bits per word. Must be 32.
 static const uint8_t bits = 32;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
-// The highest allowed value is 24 MHz.
-static const uint32_t speed = 23500000;
+// The highest allowed value is 23 MHz.
+static const uint32_t speed = 23000000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -93,7 +93,7 @@ In video format mode RGB888, there are 244 bytes per frame packet. */
 #define PACKET_SIZE (164)
 
 /* The number of packets to recieve in a single transfer after
-synchronization has occured */
+synchronization has occured. MUST BE 1 less than the number of packets in one segment */
 #define N_PACKETS (59)
 
 /* The number of bytes in N_PACKET frame packets */
@@ -130,12 +130,12 @@ for calculation of the CRC. */
 /* The number of bytes per packet payload */
 #define PAYLOAD_SIZE (PACKET_SIZE - HEADER_SIZE)
 
+// Create a buffer to hold a single segment.
+static uint8_t seg_buf[PACKET_SIZE*60];
+
 // Create a buffer to hold a single frame. Each frame is 120x160 pixels.
 // Each pixel is an unsigned 16 bit integer
 static uint16_t frame[120][160] = { 0 };
-static uint8_t seg_buf[PACKET_SIZE*60];
-//static uint8_t frame_packet[PACKET_SIZE];
-//static uint8_t n_frame_packet[N_PACKET_SIZE];
 
 
 ///===========================LEPTON COMMAND FUNCTIONS===========================///
@@ -469,7 +469,7 @@ void unpack_raw14_payload(uint16_t packet_num, uint8_t payload_size, uint8_t *pa
 
 /**
 **/
-uint16_t get_ind_32_bit(uint16_t des_ind)
+uint16_t get_ind(uint16_t des_ind)
 {
 	uint16_t block = des_ind / 4;
 	return 8*block + 3 - des_ind;
@@ -493,10 +493,10 @@ int transfer_segment(int *spi_fd)
 	do {
 		// Read a single frame packet and determine validity
 		status = read(*spi_fd, &seg_buf[0], PACKET_SIZE);
-		if((seg_buf[get_ind_32_bit(0)] & 0x0f) == 0x0f) continue;
+		if((seg_buf[get_ind(0)] & 0x0f) == 0x0f) continue;
 
 		// If the packet is valid, read the packet number
-		packet_num = seg_buf[get_ind_32_bit(1)];
+		packet_num = seg_buf[get_ind(1)];
 		if(packet_num != 0)
 		{
 			printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
@@ -520,7 +520,7 @@ int transfer_segment(int *spi_fd)
 		for(i = 0; i < N_PACKETS; i++)
 		{
 			// Check for correct packet number
-			packet_num = seg_buf[get_ind_32_bit(packet_ind + 1)];
+			packet_num = seg_buf[get_ind(packet_ind + 1)];
 			if(packet_num != expected_packet_num)
 			{
 				printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
@@ -534,45 +534,17 @@ int transfer_segment(int *spi_fd)
 		}
 	}
 
-	// Grab the last chunk of packets
-	num_packets_left = 59-packet_num;
-	status = read(*spi_fd, &seg_buf[packet_ind], PACKET_SIZE*num_packets_left);
-
-	// Extract data the last chunk of  packets
-	for(i = 0; i < num_packets_left; i++)
-	{
-		// Check for correct packet number
-		packet_num = seg_buf[get_ind_32_bit(packet_ind + 1)];
-		if(packet_num != expected_packet_num)
-		{
-			printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
-			return -1;
-		}
-
-		// Get segment number
-		if(packet_num == 20)
-		{
-			segment_num = seg_buf[get_ind_32_bit(packet_ind)];
-			//read_segment_num(seg_buf[get_ind_32_bit(packet_ind)], &segment_num);
-		}
-
-		// Update expected packet number and the index of the next packet
-		// in the segment buffer
-		expected_packet_num++;
-		packet_ind += PACKET_SIZE;
-	}
-
 	// Unpack image
-//	printf("Success! Saving...\n");
-//	for(i = 0; i < 60; i++)
-//	{
-//		packet_ind = PACKET_SIZE*i;
-//		unpack_raw14_payload(i, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE+packet_ind]);
-//	}
-//	save_pgm_file();
+	//printf("Success! Saving...\n");
+	//for(i = 0; i < 60; i++)
+	//{
+	//	packet_ind = PACKET_SIZE*i;
+	//	unpack_raw14_payload(i, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE+packet_ind]);
+	//}
+	//save_pgm_file();
 
 	// 0 on succes
-	 printf("Segment recieved: %d\n", segment_num);
+	printf("Segment recieved: %d\n", segment_num);
 	return 0;
 }
 
@@ -587,7 +559,7 @@ int main(int argc, char *argv[])
 
 
 	///=====================REBOOT CAMERA=====================///
-	//reboot_lepton();
+	reboot_lepton();
 
 
 	///=====================INITIALIZE SPI DEVICE=====================///
@@ -664,7 +636,7 @@ int main(int argc, char *argv[])
 	}
 
 	// print configure SPI settings
-	printf("===SPI CONFIG===\n", rd_mode);
+	printf("\n\n===SPI CONFIG===\n", rd_mode);
 	printf("Device: %s\n", spi_device);
 	printf("Mode: %d\nBits per Word: %d\nClock: %d MHz\n", rd_mode, rd_bits, rd_speed/1000000);
 
@@ -705,7 +677,7 @@ int main(int argc, char *argv[])
 
 	// Transfer 25 segments
 	printf("\n\n===TRANSMITTING===\n");
-	for(int i = 0; i < 250; i++)
+	for(int i = 0; i < 25; i++)
 	{
 		status = transfer_segment(&spi_fd);
 		if(status<0)
