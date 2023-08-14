@@ -435,17 +435,7 @@ int transfer_segment(int *spi_fd)
 		}
 	}
 
-	// Unpack image
-	//printf("Success! Saving...\n");
-	//for(i = 0; i < 60; i++)
-	//{
-	//	packet_ind = PACKET_SIZE*i;
-	//	unpack_raw14_payload(i, PAYLOAD_SIZE, &seg_buf[HEADER_SIZE+packet_ind]);
-	//}
-	//save_pgm_file();
-
-	// 0 on succes
-	printf("Segment recieved: %d\n", segment_num);
+	// Segment number on succes
 	return segment_num;
 }
 
@@ -539,33 +529,40 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	// Transfer 25 segments
+	// Transfer up to 50 segments
 	printf("\n\n===TRANSMITTING===\n");
 	int expected_segment = 1;
 	int segment_num;
-	for(int i = 0; i < 25; i++)
+	for(int i = 0; i < 50; i++)
 	{
 		segment_num = transfer_segment(&spi_fd);
 		if(segment_num<0)
 		{
 			printf("Waiting for desync reset...\n");
+			printf("----------------------\n");
 			usleep(185000);
 		}
 		else if(segment_num == expected_segment)
 		{
+			printf("Segment recieved: %d/4\n", segment_num);
+			printf("----------------------\n");
 			unpack_raw14_payload(segment_num);
 			expected_segment++;
 			if(expected_segment == 5)
 			{
-				expected_segment = 1;
+				printf("Image captured\n");
+				printf("----------------------\n");
 				save_pgm_file();
+				close(spi_fd);
+				return 0;
 			}
 		}
-		printf("-----------------\n");
 	}
 
 
-	///=====================TERMINAL OPERATIONS=====================///
+	///=====================FAILURE OPERATIONS=====================///
+	printf("Capture failed\n");
+	printf("----------------------\n");
 	close(spi_fd);
-	return 0;
+	return -1;
 }
