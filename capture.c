@@ -82,8 +82,8 @@ static const uint8_t mode = 3;
 static const uint8_t bits = 8;
 
 // Maximum serial clock frequency (in Hz.) that the board may set.
-// The highest allowed value is 23 MHz.
-static const uint32_t speed = 25000000;
+// The highest allowed value is 24 MHz.
+static const uint32_t speed = 23500000;
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -731,6 +731,20 @@ int main(int argc, char *argv[])
 		pabort("camera status returned failure");
 	}
 
+	// Transfer a segment
+	for(int i = 0; i < 10; i++)
+	{
+		status = transfer_segment(&spi_fd);
+		if(status<0)
+		{
+			printf("Waiting for desync reset...\n");
+			usleep(185000);
+		}
+		printf("----------------------------------------------------------\n\n");
+	}
+
+	/*
+
 	// Variables used for VSYNC pulse detection
 	uint8_t curr_vsync_val = 0;
 	uint8_t prev_vsync_val = 1;
@@ -759,7 +773,7 @@ int main(int argc, char *argv[])
 		}
 		prev_vsync_val = curr_vsync_val;
 	}
-
+*/
 
 	///=====================TERMINAL OPERATIONS=====================///
 	close(spi_fd);
