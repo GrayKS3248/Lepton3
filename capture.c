@@ -319,36 +319,54 @@ void save_pgm_file(void)
 
 /**
 **/
-void unpack_raw14_payload(uint16_t packet_num, uint8_t payload_size, uint8_t *payload)
+uint16_t get_ind(uint16_t des_ind)
 {
-	// Get the row and col number from the packet number
-	uint16_t row_num = packet_num / 2;
-	uint16_t col_num = 0;
-	if(packet_num & 0x0001) col_num = 80;
-
-	// Loop trough payload
-	uint16_t pix_val;
-	for(uint8_t i = 0; i < payload_size; i+=2)
-	{
-		// Extract pixel value
-		pix_val = payload[i];
-		pix_val = pix_val << 8;
-		pix_val = pix_val | payload[i+1];
-		pix_val = pix_val & 0x3fff;
-
-		// Add pixel to frame
-		frame[row_num][col_num] = pix_val;
-		col_num++;
-	}
+	uint16_t block = des_ind / 4;
+	return 8*block + 3 - des_ind;
 }
 
 
 /**
 **/
-uint16_t get_ind(uint16_t des_ind)
+void unpack_raw14_payload(int segment_num)
 {
-	uint16_t block = des_ind / 4;
-	return 8*block + 3 - des_ind;
+	uint16_t packet_ind;
+	uint16_t pix_ind_0;
+	uint16_t pix_ind_1;
+	uint16_t row_num;
+	uint16_t col_num;
+	uint16_t pix_val;
+
+	// Go through each 60 packets in the segment
+	for(int packet_num = 0; packet_num < 60; packet_num++)
+	{
+		// Get the index of the first element of the current packet
+		packet_ind = PACKET_SIZE*packet_num;
+
+		// Get the row number of the packet
+		row_num = 30*(segment_num-1) + (packet_num / 2);
+
+		// Get the first column number of the packet
+		col_num = 0;
+		if(packet_num & 0x0001) col_num = 80;
+
+		for(int pix_num = 0; pix_num < 80; pix_num++)
+		{
+			// Get the indices of the current pixel
+			pix_ind_0 = get_ind(packet_ind + HEADER_SIZE + 2*pix_num);
+			pix_ind_1 =  get_ind(packet_ind + HEADER_SIZE + 2*pix_num + 1);
+
+			// Extract the pixel value
+			pix_val = seg_buf[pix_ind_0];
+			pix_val = pix_val << 8;
+			pix_val = pix_val | seg_buf[pix_ind_1];
+			pix_val = pix_val & 0x3fff;
+
+			// Add pixel to frame
+			frame[row_num][col_num] = pix_val;
+			col_num++;
+		}
+	}
 }
 
 
@@ -403,6 +421,13 @@ int transfer_segment(int *spi_fd)
 				return -1;
 			}
 
+			// Get the segment number
+			if(packet_num==20)
+			{
+				segment_num = seg_buf[get_ind(packet_ind)];
+				segment_num = segment_num >> 4;
+			}
+
 			// Update expected packet number and the index of the next packet
 			// in the segment buffer
 			expected_packet_num++;
@@ -421,7 +446,7 @@ int transfer_segment(int *spi_fd)
 
 	// 0 on succes
 	printf("Segment recieved: %d\n", segment_num);
-	return 0;
+	return segment_num;
 }
 
 int main(int argc, char *argv[])
@@ -516,13 +541,25 @@ int main(int argc, char *argv[])
 
 	// Transfer 25 segments
 	printf("\n\n===TRANSMITTING===\n");
+	int expected_segment = 1;
+	int segment_num;
 	for(int i = 0; i < 25; i++)
 	{
-		status = transfer_segment(&spi_fd);
-		if(status<0)
+		segment_num = transfer_segment(&spi_fd);
+		if(segment_num<0)
 		{
 			printf("Waiting for desync reset...\n");
 			usleep(185000);
+		}
+		else if(segment_num == expected_segment)
+		{
+			unpack_raw14_payload(segment_num);
+			expected_segment++;
+			if(expected_segment == 5)
+			{
+				expected_segment = 1;
+				save_pgm_file();
+			}
 		}
 		printf("-----------------\n");
 	}
