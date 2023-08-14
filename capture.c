@@ -32,7 +32,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <getopt.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <time.h>
 
 // System libs
 #include <sys/ioctl.h>
@@ -40,7 +39,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Linux kernel libs
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
-#include <linux/gpio.h>
 #include <linux/i2c-dev.h>
 
 // Lepton SDK libs
@@ -48,20 +46,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "LEPTON_SDK.h"
 #include "LEPTON_OEM.h"
 #include "LEPTON_SYS.h"
-
-
-/**
-**/
-static void pabort(const char *s)
-{
-	perror(s);
-	abort();
-}
-
-
-///===========================DEFINE GPIO PARAMETERS FOR VSYNC===========================///
-// Device name of gpio chip on which the VSYNC data is sent
-static const char *gpio_device = "/dev/gpiochip1";
 
 
 ///===========================DEFINE SPI PROTOCOL PARAMETERS===========================///
@@ -189,6 +173,7 @@ int wait_until_ready(void)
 **/
 int reboot_lepton(void)
 {
+	// IO for booting
 	printf("===BOOTING===\n");
 
 	// Open I2C port
@@ -269,94 +254,6 @@ int set_video_format_raw14(void)
 }
 
 
-///===========================BITBANG SPI FUNCTIONS===========================///
-/**
-**/
-int open_gpio_write(int line, struct gpiohandle_request *rq)
-{
- 	// Open GPIO chip and get file descriptor
-	int fd = open(gpio_device, O_WRONLY);
-	if (fd < 0) return -1;
-
-	// Request line handle for GPIO chip 0, header 7J1 at requested line
-	rq->lineoffsets[0] = line;
-	rq->lines = 1;
-	rq->flags = GPIOHANDLE_REQUEST_OUTPUT;
-	if (ioctl(fd, GPIO_GET_LINEHANDLE_IOCTL, rq) < 0) return -1;
-
-	// 0 on success
-	close(fd);
-	return 0;
-}
-
-
-/**
-**/
-int open_gpio_read(int line, struct gpiohandle_request *rq)
-{
- 	// Open GPIO chip and get file descriptor
-	int fd = open(gpio_device, O_RDONLY);
-	if (fd < 0) return -1;
-
-	// Request line handle for GPIO chip 0, header 7J1 at requested line
-	rq->lineoffsets[0] = line;
-	rq->lines = 1;
-	rq->flags = GPIOHANDLE_REQUEST_INPUT;
-	if (ioctl(fd, GPIO_GET_LINEHANDLE_IOCTL, rq) < 0) return -1;
-
-	// 0 on success
-	close(fd);
-	return 0;
-}
-
-
-/**
-**/
-void set_gpio_high(struct gpiohandle_request *rq, struct gpiohandle_data *dat)
-{
-	// Set GPIO pin at rq high
-	dat->values[0] = 1;
-	ioctl(rq->fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, dat);
-}
-
-
-/**
-**/
-void set_gpio_low(struct gpiohandle_request *rq, struct gpiohandle_data *dat)
-{
-	// Set GPIO pin at rq low
-	dat->values[0] = 0;
-	ioctl(rq->fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, dat);
-}
-
-
-/**
-**/
-uint8_t read_gpio(struct gpiohandle_request *rq, struct gpiohandle_data *dat)
-{
-	// Read and return from rq
-	ioctl(rq->fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, dat);
-	return dat->values[0];
-}
-
-
-/**
-**/
-void read_8bit_word_spi3(uint8_t *word, struct gpiohandle_request *clk_rq, struct gpiohandle_data *clk_dat, struct gpiohandle_request *rd_rq, struct gpiohandle_data *rd_dat)
-{
-	// Read 8 bits
-	for(int i=0; i<8; i++)
-	{
-		// Data shift on falling edge
-		set_gpio_low(clk_rq, clk_dat);
-
-		// Data read on rising edge
-		set_gpio_high(clk_rq, clk_dat);
-		word[i] = read_gpio(rd_rq, rd_dat);
-	}
-}
-
-
 ///===========================FRAME STREAM AND SAVE FUNCTIONS===========================///
 /**
 **/
@@ -384,7 +281,7 @@ void save_pgm_file(void)
 	FILE *f = fopen(image_name, "w");
 	if (f == NULL)
 	{
-		pabort("error opening save file");
+		printf("Error opening save file: Aborting save operation\n");
 	}
 
 	// Find min and max pixel values (ignore 0 pixel values)
@@ -417,27 +314,6 @@ void save_pgm_file(void)
 
 	// Close file
 	fclose(f);
-}
-
-
-/**
-**/
-void read_packet_num(uint8_t byte_0, uint8_t byte_1, uint16_t *packet_num)
-{
-	*packet_num = (uint16_t)byte_0; //0x00_(byte 0)
-	*packet_num = *packet_num << 8; //0x(byte 0)_00
-	*packet_num = *packet_num | (uint16_t)byte_1; //0x(byte 0)_(byte 1)
-	*packet_num = *packet_num & 0x0fff; //0x0(bits 4-7 of byte 0)_(byte 1)
-}
-
-
-/**
-**/
-void read_segment_num(uint8_t byte_0, uint16_t *segment_num)
-{
-	*segment_num = (uint16_t)byte_0; //first 8 bits
-	*segment_num = *segment_num & 0x70; // isolate bits 1-3
-	*segment_num = *segment_num >> 4; // push bits 1-3 to the end
 }
 
 
@@ -550,95 +426,49 @@ int transfer_segment(int *spi_fd)
 
 int main(int argc, char *argv[])
 {
-	///=====================LOCAL VARIABLE DECLARATION=====================///
-	uint8_t rd_mode;
-	uint8_t rd_bits;
-	uint32_t rd_speed;
-	int status = 0;
-	int spi_fd;
-
-
 	///=====================REBOOT CAMERA=====================///
 	reboot_lepton();
 
-
-	///=====================INITIALIZE SPI DEVICE=====================///
+	///=====================CONFIGURE SPI DEVICE=====================///
 	// Create file descriptor for SPI device
-	spi_fd = open(spi_device, O_RDWR);
+	int spi_fd = open(spi_device, O_RDWR);
 	if (spi_fd < 0)
 	{
-		pabort("can't open spi device");
+		printf("Can't open spi device. Are DT overlays \"spicc\" and \"spicc-spidev\" enabled?\n"); // Abort if can't open SPI
+		return -1;
 	}
 
-
-	///=====================CONFIGURE SPI DEVICE=====================///
-	// Attempt to set SPI communication mode
-	status = ioctl(spi_fd, SPI_IOC_WR_MODE, &mode);
+	// Set SPI communication mode
+	int status = ioctl(spi_fd, SPI_IOC_WR_MODE, &mode);
 	if (status == -1)
 	{
 		close(spi_fd);
-		pabort("can't set spi mode"); // Abort if mode set failure
+		printf("Can't set SPI mode\n"); // Abort if mode set failure
+		return -1;
 	}
 
-	// Attempt to read SPI communication mode
-	status = ioctl(spi_fd, SPI_IOC_RD_MODE, &rd_mode);
-	if (status == -1)
-	{
-		close(spi_fd);
-		pabort("can't get spi mode"); // Abort if mode read failure
-	}
-	if (rd_mode != mode)
-	{
-		close(spi_fd);
-		pabort("set spi mode failure"); // Abort if set mode and read mode are different
-	}
-
-	// Attempt to set SPI bits per word
+	// Set SPI bits per word
 	status = ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
 	if (status == -1)
 	{
 		close(spi_fd);
-		pabort("can't set bits per word"); // Abort if bits set failure
+		printf("Can't set SPI bits per word\n"); // Abort if bits set failure
+		return -1;
 	}
 
-	// Attempt to read SPI bits per word
-	status = ioctl(spi_fd, SPI_IOC_RD_BITS_PER_WORD, &rd_bits);
-	if (status == -1)
-	{
-		close(spi_fd);
-		pabort("can't get bits per word"); // Abort if bits read failure
-	}
-	if (rd_mode != mode)
-	{
-		close(spi_fd);
-		pabort("set spi bits failure"); // Abort if set bits and read bits are different
-	}
-
-	// Attempt to set maximum allowed SPI read speed
+	// Set SPI clock
 	status = ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
 	if (status == -1)
 	{
 		close(spi_fd);
-		pabort("can't set max speed hz"); // Abort if speed set failure
-	}
-
-	// Attempt to read maximum allowed SPI read speed
-	status = ioctl(spi_fd, SPI_IOC_RD_MAX_SPEED_HZ, &rd_speed);
-	if (status == -1)
-	{
-		close(spi_fd);
-		pabort("can't get max speed hz"); // Abort if speed read failure
-	}
-	if (rd_speed != speed)
-	{
-		close(spi_fd);
-		pabort("set spi speed failure"); // Abort if set speed and read speed are different
+		printf("Can't set SPI clock speed\n"); // Abort if speed set failure
+		return -1;
 	}
 
 	// print configure SPI settings
-	printf("\n\n===SPI CONFIG===\n", rd_mode);
+	printf("\n\n===SPI CONFIG===\n");
 	printf("Device: %s\n", spi_device);
-	printf("Mode: %d\nBits per Word: %d\nClock: %d MHz\n", rd_mode, rd_bits, rd_speed/1000000);
+	printf("Mode: %d\nBits per Word: %d\nClock: %d MHz\n", mode, bits, speed/1000000);
 
 
 	///=====================CAMERA CONFIGURATION=====================///
@@ -649,6 +479,12 @@ int main(int argc, char *argv[])
 		printf("\n\n===CAMERA CONFIG===\n");
 		printf("Lepton GPIO Mode: LEP_OEM_GPIO_MODE_VSYNC\n");
 	}
+	else
+	{
+		close(spi_fd);
+		printf("Can't initialize VSYNC. Is DT overlay \"i2c-ao\" enabled?\n");
+		return -1;
+	}
 
 	// Set camera video output format to RAW14
 	status = set_video_format_raw14();
@@ -658,7 +494,9 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		pabort("failed to set video format to RAW14");
+		close(spi_fd);
+		printf("Can't set video format to RAW14\n");
+		return -1;
 	}
 
 
@@ -672,7 +510,8 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		pabort("camera status returned failure");
+		printf("Camera status returned failure\n");
+		return -1;
 	}
 
 	// Transfer 25 segments
