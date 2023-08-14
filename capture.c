@@ -488,7 +488,11 @@ int transfer_segment(int *spi_fd)
 
 		// If the packet is valid, read the packet number
 		packet_num = seg_buf[1];
-		if(packet_num != 0) return -1;
+		if(packet_num != 0)
+		{
+			printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
+			return -1;
+		}
 
 		// Set the expected packet number and the index of the next packet
 		// in the segment buffer
@@ -557,30 +561,12 @@ int transfer_segment(int *spi_fd)
 
 int main(int argc, char *argv[])
 {
-	/*struct gpiohandle_request clk_rq;
-	struct gpiohandle_data clk_dat;
-	int clk_line = 82;
-	open_gpio_write(clk_line, &clk_rq);
-
-	struct gpiohandle_request mosi_rq;
-	struct gpiohandle_data mosi_dat;
-	int mosi_line = 83;
-	open_gpio_read(mosi_line, &mosi_rq);
-
-	uint8_t word[8];
-
-	set_gpio_high(&clk_rq, &clk_dat);
-
-	read_8bit_word_spi3(word, &clk_rq, &clk_dat, &mosi_rq, &mosi_dat);
-	read_8bit_word_spi3(word, &clk_rq, &clk_dat, &mosi_rq, &mosi_dat);
-	read_8bit_word_spi3(word, &clk_rq, &clk_dat, &mosi_rq, &mosi_dat);
-	*/
-
 	///=====================LOCAL VARIABLE DECLARATION=====================///
 	uint8_t rd_mode;
 	uint8_t rd_bits;
 	uint32_t rd_speed;
 	int status = 0;
+	int spi_fd;
 
 
 	///=====================REBOOT CAMERA=====================///
@@ -589,7 +575,6 @@ int main(int argc, char *argv[])
 
 	///=====================INITIALIZE SPI DEVICE=====================///
 	// Create file descriptor for SPI device
-	int spi_fd;
 	spi_fd = open(spi_device, O_RDWR);
 	if (spi_fd < 0)
 	{
@@ -688,36 +673,6 @@ int main(int argc, char *argv[])
 	}
 
 
-	///=====================INITIALIZE GPIO DEVICE=====================///
-	int gpio_fd;
-	struct gpiohandle_request gpio_line_handle;
-	struct gpiohandle_data gpio_line_data;
-
- 	// Open GPIO chip and get file descriptor
-	gpio_fd = open(gpio_device, O_RDONLY);
-	if (gpio_fd < 0)
-	{
-		close(spi_fd);
-		pabort("can't open GPIO device");
-	}
-
-	// Get line handle for GPIO chip 0, line 82 (Header: 7J1, Pin: 38)
-	gpio_line_handle.lineoffsets[0] = 82;
-	gpio_line_handle.lines = 1;
-	gpio_line_handle.flags = GPIOHANDLE_REQUEST_INPUT;
-	status = ioctl(gpio_fd, GPIO_GET_LINEHANDLE_IOCTL, &gpio_line_handle);
-	if (status < 0)
-	{
-		close(gpio_fd);
-		close(spi_fd);
-		pabort("unable to get GPIO line handle");
-	}
-
-	printf("\n\n===GPIO CONFIG===\n");
-	printf("Chip: %s\n", gpio_device);
-	printf("Line: %d\n", gpio_line_handle.lineoffsets[0]);
-
-
 	///=====================IMAGE CAPTURE OPERATIONS=====================///
 	// Ensure Lepton camera status is good
 	printf("\n\n===CAMERA STATUS===\n");
@@ -731,7 +686,7 @@ int main(int argc, char *argv[])
 		pabort("camera status returned failure");
 	}
 
-	// Transfer a segment
+	// Transfer 10 segments
 	for(int i = 0; i < 10; i++)
 	{
 		status = transfer_segment(&spi_fd);
@@ -740,44 +695,12 @@ int main(int argc, char *argv[])
 			printf("Waiting for desync reset...\n");
 			usleep(185000);
 		}
+		else printf("SUCCESS\n");
 		printf("----------------------------------------------------------\n\n");
 	}
 
-	/*
-
-	// Variables used for VSYNC pulse detection
-	uint8_t curr_vsync_val = 0;
-	uint8_t prev_vsync_val = 1;
-
-	// Poll GPIO chip 0, line 82 (Header: 7J1, Pin: 38) for next VSYNC pulse
-	// The VSYNC pulse rising edge indicates start of new frame time
-	printf("\n\n===CAPTURING===\n");
-	for(int i = 0; i < 50000; i++)
-	{
-		// Retrieve data from GPIO line handle
-		status = ioctl(gpio_line_handle.fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &gpio_line_data);
-
-		// Detect new frame time pulse
-		curr_vsync_val = gpio_line_data.values[0];
-		if(curr_vsync_val==1 && prev_vsync_val==0)
-		{
-
-			// Transfer segment
-			status = transfer_segment(&spi_fd);
-			if(status<0)
-			{
-				printf("Waiting for desync reset...\n");
-				usleep(185000);
-			}
-			printf("----------------------------------------------------------\n\n");
-		}
-		prev_vsync_val = curr_vsync_val;
-	}
-*/
 
 	///=====================TERMINAL OPERATIONS=====================///
 	close(spi_fd);
-	close(gpio_fd);
-	close(gpio_line_handle.fd);
 	return 0;
 }
