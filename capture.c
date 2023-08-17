@@ -336,10 +336,6 @@ void unpack_raw14_payload(int segment_num)
 **/
 int transfer_segment(int *spi_fd)
 {
-	int status;
-	uint8_t i;
-	uint8_t num_packets_left;
-	uint16_t n_packet_ind;
 	uint16_t packet_ind;
 	uint16_t expected_packet_num;
 	uint16_t packet_num = 65535;
@@ -348,7 +344,7 @@ int transfer_segment(int *spi_fd)
 	// Recieve discard packets until the first valid packet is detected
 	do {
 		// Read a single frame packet and determine validity
-		status = read(*spi_fd, &seg_buf[0], PACKET_SIZE);
+		read(*spi_fd, &seg_buf[0], PACKET_SIZE);
 		if((seg_buf[get_ind(0)] & 0x0f) == 0x0f) continue;
 
 		// If the packet is valid, read the packet number
@@ -371,10 +367,10 @@ int transfer_segment(int *spi_fd)
 	{
 		// Read the entire segment except for the first packet
 		// The first packet has already been read
-		status = read(*spi_fd, &seg_buf[packet_ind], SEGMENT_SIZE-PACKET_SIZE);
+		read(*spi_fd, &seg_buf[packet_ind], SEGMENT_SIZE-PACKET_SIZE);
 
 		// Extract data from the rest of the segment
-		for(i = 0; i < PACKETS_PER_SEGMENT-1; i++)
+		for(int i = 0; i < PACKETS_PER_SEGMENT-1; i++)
 		{
 			// Check for correct packet number
 			packet_num = seg_buf[get_ind(packet_ind + 1)];
