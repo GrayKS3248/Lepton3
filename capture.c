@@ -49,73 +49,34 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ///===========================DEFINE SPI PROTOCOL PARAMETERS===========================///
-// Device name of SPI port of Lepton camera (may have to change to /dev/spidev0.1)
+// Device name of SPI port Lepton camera is on.
 static const char *spi_device = "/dev/spidev0.0";
 
-/* Clock polarity and phase mode. The Lepton 3.x VOSPI protocol uses mode 3.
-| MODE || CPOL | CPHA |
-|------||------|------|
-|  0   ||  0   |  0   |
-|  1   ||  0   |  1   |
-|  2   ||  1   |  0   |
-|  3   ||  1   |  1   |
-*/
-static const uint8_t mode = 3;
+// SPI mode. Lepton uses mode 3.
+#define SPI_MODE (3)
 
-// Number of bits per word. Must be 32.
-static const uint8_t bits = 32;
+// Number of bytes per SPI word. Valid values: 1, 2, 4. Default is 4.
+#define SPI_BYTES_PER_WORD (4)
 
-// Maximum serial clock frequency (in Hz.) that the board may set.
-// The highest allowed value is 23 MHz.
-static const uint32_t speed = 23000000;
+// SPI clock in Hz. Maximum is 23 MHz.
+#define SPI_SPEED (23500000)
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
-/* The number of bytes per VOSPI frame packet.
-In video format mode Raw14, there are 164 bytes per frame packet.
-In video format mode RGB888, there are 244 bytes per frame packet. */
+//The number of bytes per VOSPI frame packet. Default is 164.
 #define PACKET_SIZE (164)
 
-/* The number of packets to recieve in a single transfer after
-synchronization has occured. MUST BE 1 less than the number of packets in one segment */
-#define N_PACKETS (59)
+// Number of bytes in frame packet before payload. Default is 4.
+#define HEADER_SIZE (4)
 
-/* The number of bytes in N_PACKET frame packets */
-#define N_PACKET_SIZE (PACKET_SIZE * N_PACKETS)
+// The number of packets in a frame segment. Default is 60.
+#define PACKETS_PER_SEGMENT (60)
 
-/* The number of bytes of the ID section of the frame packet header
-The first bit of the ID field is always zero.
-The next three bits are the TTT bits.
-For all packets except for packet number 20, the TTT bits are ignored.
-The TTT bits are bits 1-3.
-On packet 20, the TTT bits encode the segment number (1,2,3,4) of itself,
-the previous 19 packets, and packets 21-59. If the segment number is 0,
-the segment is invalid and the entire segment is discarded.
-The last 12 bits encode the packet number, 0 - 59 with telemetry
-disabled and 0 - 60 with telemetry enabled. Packet numbers restart from
-0 on each new segment.
-The ID section also encodes the discard condition. Any packet whose ID
-section meets the condition (ID & 0x0F00) == 0x0F00 is a discard packet*/
-#define ID_SIZE (2)
-
-/* The number of bytes of the CRC section of the frame packet header
-The CRC portion of the packet header contains a 16-bit cyclic
-redundancy check (CRC), computed using the following polynomial:
-x^(16) + x^(12) + x^(5) + x^(0)
-The CRC is calculated over the entire packet, including the
-ID and CRC fields. However, the four most-significant
-bits of the ID and allsixteen bits of the CRC are set to zero
-for calculation of the CRC. */
-#define CRC_SIZE (2)
-
-/* Number of bytes in frame packet before payload */
-#define HEADER_SIZE (ID_SIZE + CRC_SIZE)
-
-/* The number of bytes per packet payload */
-#define PAYLOAD_SIZE (PACKET_SIZE - HEADER_SIZE)
+// The number of bytes in a frame segment
+#define SEGMENT_SIZE (PACKET_SIZE * PACKETS_PER_SEGMENT)
 
 // Create a buffer to hold a single segment.
-static uint8_t seg_buf[PACKET_SIZE*60];
+static uint8_t seg_buf[SEGMENT_SIZE];
 
 // Create a buffer to hold a single frame. Each frame is 120x160 pixels.
 // Each pixel is an unsigned 16 bit integer
@@ -321,8 +282,9 @@ void save_pgm_file(void)
 **/
 uint16_t get_ind(uint16_t des_ind)
 {
-	uint16_t block = des_ind / 4;
-	return 8*block + 3 - des_ind;
+	uint16_t block_num = des_ind / SPI_BYTES_PER_WORD;
+	uint16_t new_ind = SPI_BYTES_PER_WORD * (2*block_num + 1) - 1 - des_ind;
+	return new_ind;
 }
 
 
@@ -404,14 +366,15 @@ int transfer_segment(int *spi_fd)
 
 	} while (packet_num != 0);
 
-	// Recieve valid packets in N PACKET chunks
-	while(packet_num + N_PACKETS < 60)
+	// Recieve valid packets until the segment is fully transmitted
+	while(packet_num + (PACKETS_PER_SEGMENT-1) < 60)
 	{
-		// Read N_PACKETS frame packets
-		status = read(*spi_fd, &seg_buf[packet_ind], N_PACKET_SIZE);
+		// Read the entire segment except for the first packet
+		// The first packet has already been read
+		status = read(*spi_fd, &seg_buf[packet_ind], SEGMENT_SIZE-PACKET_SIZE);
 
-		// Extract data from N_PACKETS packets
-		for(i = 0; i < N_PACKETS; i++)
+		// Extract data from the rest of the segment
+		for(i = 0; i < PACKETS_PER_SEGMENT-1; i++)
 		{
 			// Check for correct packet number
 			packet_num = seg_buf[get_ind(packet_ind + 1)];
@@ -426,6 +389,12 @@ int transfer_segment(int *spi_fd)
 			{
 				segment_num = seg_buf[get_ind(packet_ind)];
 				segment_num = segment_num >> 4;
+
+				// If the segment is 0, do not continue to unpack
+				if(segment_num==0) return segment_num;
+
+				// If the segment is <0 or >4, desync has occured
+				if(segment_num<0 || segment_num>4) return -1;
 			}
 
 			// Update expected packet number and the index of the next packet
@@ -441,9 +410,6 @@ int transfer_segment(int *spi_fd)
 
 int main(int argc, char *argv[])
 {
-	///=====================REBOOT CAMERA=====================///
-	reboot_lepton();
-
 	///=====================CONFIGURE SPI DEVICE=====================///
 	// Create file descriptor for SPI device
 	int spi_fd = open(spi_device, O_RDWR);
@@ -454,8 +420,8 @@ int main(int argc, char *argv[])
 	}
 
 	// Set SPI communication mode
-	int status = ioctl(spi_fd, SPI_IOC_WR_MODE, &mode);
-	if (status == -1)
+	const int mode = SPI_MODE;
+	if(ioctl(spi_fd, SPI_IOC_WR_MODE, &mode) == -1)
 	{
 		close(spi_fd);
 		printf("Can't set SPI mode\n"); // Abort if mode set failure
@@ -463,8 +429,8 @@ int main(int argc, char *argv[])
 	}
 
 	// Set SPI bits per word
-	status = ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
-	if (status == -1)
+	const int bits = 8*SPI_BYTES_PER_WORD;
+	if(ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) == -1)
 	{
 		close(spi_fd);
 		printf("Can't set SPI bits per word\n"); // Abort if bits set failure
@@ -472,8 +438,8 @@ int main(int argc, char *argv[])
 	}
 
 	// Set SPI clock
-	status = ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
-	if (status == -1)
+	const int speed = SPI_SPEED;
+	if(ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) == -1)
 	{
 		close(spi_fd);
 		printf("Can't set SPI clock speed\n"); // Abort if speed set failure
@@ -487,26 +453,12 @@ int main(int argc, char *argv[])
 
 
 	///=====================CAMERA CONFIGURATION=====================///
-	// Set camera GPIO mode to VSYNC
-	status = init_vsync();
-	if(status==0)
-	{
-		printf("\n\n===CAMERA CONFIG===\n");
-		printf("Lepton GPIO Mode: LEP_OEM_GPIO_MODE_VSYNC\n");
-	}
-	else
-	{
-		close(spi_fd);
-		printf("Can't initialize VSYNC. Is DT overlay \"i2c-ao\" enabled?\n");
-		return -1;
-	}
-
 	// Set camera video output format to RAW14
-	status = set_video_format_raw14();
-	if(status==0)
-	{
-		printf("Video output format: RAW14\n");
-	}
+	printf("\n\n===CAMERA CONFIG===\n");
+	if(init_vsync() == 0) printf("GPIO mode: VSYNC\n");
+
+	// Set camera GPIO to vsync
+	if(set_video_format_raw14() == 0) printf("Video output format: RAW14\n");
 	else
 	{
 		close(spi_fd);
@@ -518,43 +470,78 @@ int main(int argc, char *argv[])
 	///=====================IMAGE CAPTURE OPERATIONS=====================///
 	// Ensure Lepton camera status is good
 	printf("\n\n===CAMERA STATUS===\n");
-	status = wait_until_ready();
-	if(status==0)
-	{
-		printf("Camera status good\n");
-	}
+	if(wait_until_ready() == 0) printf("Camera status good\n");
 	else
 	{
+		close(spi_fd);
 		printf("Camera status returned failure\n");
 		return -1;
 	}
 
-	// Transfer up to 50 segments
+	// Transfer up to 20 segments per frame
 	printf("\n\n===TRANSMITTING===\n");
 	int expected_segment = 1;
 	int segment_num;
-	for(int i = 0; i < 50; i++)
+	int num_desync = 0;
+	int num_frames = 0;
+	int num_frames_wanted = 1;
+	for(int i = 0; i < 20*num_frames_wanted; i++)
 	{
+		// Get a frame segment
 		segment_num = transfer_segment(&spi_fd);
+
+		// Segment numbers <0 indicate desynchronization
 		if(segment_num<0)
 		{
+			num_desync++;
+			printf("Desync occured recieving: Segment Number %d\n", expected_segment);
 			printf("Waiting for desync reset...\n");
 			printf("----------------------\n");
-			usleep(185000);
+
+			// If too many desynchronizations are detected, reboot
+			if(num_desync > 10)
+			{
+				// Reset trackers
+				expected_segment = 1;
+				num_desync = 0;
+
+				// IO and reboot
+				printf("Too many desyncs detecting. Rebooting...\n\n\n");
+				if(reboot_lepton() < 0)
+				{
+					printf("Can't boot camera. Is DT overlay \"i2c-ao\" enabled?\n");
+					close(spi_fd);
+					return -1;
+				}
+				printf("\n\n===TRANSMITTING===\n");
+			}
+
+			// If the number of desyncs are in bounds, wait for frame to time out
+			else usleep(185000);
 		}
+
+		// If the expected segment is recieved, unpack the payload data
 		else if(segment_num == expected_segment)
 		{
-			printf("Segment recieved: %d/4\n", segment_num);
-			printf("----------------------\n");
 			unpack_raw14_payload(segment_num);
 			expected_segment++;
+
+			// Expected segment 5 indicates full frame (4 segments) has been recieved
 			if(expected_segment == 5)
 			{
-				printf("Image captured\n");
-				printf("----------------------\n");
+				// Update trackers
+				num_frames++;
+				expected_segment = 1;
+				num_desync = 0;
 				save_pgm_file();
-				close(spi_fd);
-				return 0;
+				printf("Image captured\n");
+
+				// Terminal operations post capture
+				if(num_frames >= num_frames_wanted)
+				{
+					close(spi_fd);
+					return 0;
+				}
 			}
 		}
 	}
