@@ -3,7 +3,7 @@ OBJ:=$(SRC:%.c=%.o)
 OUT:=$(SRC:%.c=%)
 
 CC=gcc
-CFLAGS=-O2
+CFLAGS=-O3
 INC=leptonSDKEmb32PUB/
 LINK=leptonSDKEmb32PUB/Debug/
 LIB=LEPTON_SDK

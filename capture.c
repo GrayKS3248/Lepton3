@@ -56,7 +56,7 @@ static const char *spi_device = "/dev/spidev0.0";
 #define SPI_BYTES_PER_WORD (4)
 
 // SPI clock in Hz. Maximum is 23 MHz.
-#define SPI_SPEED (23500000)
+#define SPI_SPEED (23000000)
 
 
 ///===========================DEFINE VOSPI PROTOCOL PARAMETERS===========================///
@@ -88,15 +88,23 @@ int get_lepton_status(void)
 	// Open I2C port
 	LEP_CAMERA_PORT_DESC_T lepton_port;
 	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
-	if(status != LEP_OK) return -1;
+	if(status != LEP_OK)
+	{
+		printf("While get_lepton_status could not: LEP_OpenPort\n");
+		return -1;
+	}
 
 	// Check status
 	LEP_STATUS_T sys_status;
 	status = LEP_GetSysStatus(&lepton_port, &sys_status);
-	if(status != LEP_OK) return -1;
+	if(status != LEP_OK)
+	{
+		printf("While get_lepton_status could not: LEP_GetSysStatus\n");
+		return -1;
+	}
 
 	// Read status
-	if(sys_status.camStatus != LEP_SYSTEM_READY) return -1;
+	if(sys_status.camStatus != LEP_SYSTEM_READY) return 1;
 
 	// 0 on success
 	return 0;
@@ -107,11 +115,21 @@ int get_lepton_status(void)
 **/
 int wait_until_ready(void)
 {
+	// Get the current status and prepare to wait
 	int status = get_lepton_status();
+
+	// Wait until ready or timed out
 	int count = 0;
 	while(status != 0)
 	{
-		// Wait for 1s then poll status again
+		// Check status for failure
+		if(status < 0)
+		{
+			printf("While wait_until_ready could not: get_lepton_status\n");
+			return -1;
+		}
+
+		// Wait for 0.5s then poll status again
 		usleep(500000);
 		status = get_lepton_status();
 		printf("...");
@@ -119,7 +137,11 @@ int wait_until_ready(void)
 
 		// Failure if the wait time is greater than 10s
 		count++;
-		if(count >= 10) return -1;
+		if(count >= 10)
+		{
+			printf("While wait_until_ready timed out during: get_lepton_status\n");
+			return -1;
+		}
 	}
 
 	// 0 on success
@@ -132,29 +154,43 @@ int wait_until_ready(void)
 int reboot_lepton(void)
 {
 	// IO for booting
-	printf("===BOOTING===\n");
+	printf("\n\n===BOOTING===\n");
 
 	// Open I2C port
 	LEP_CAMERA_PORT_DESC_T lepton_port;
 	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
-	if(status != LEP_OK) return -1;
+	if(status != LEP_OK)
+	{
+		printf("While reboot_lepton could not: LEP_OpenPort\n");
+		return -1;
+	}
 
 	// Reboot
+	int count = 1;
 	status = LEP_RunOemReboot(&lepton_port);
 	printf("...", status);
 	fflush(stdout);
 	while(status != LEP_OK)
 	{
+		if(count >= 5)
+		{
+			printf("While reboot_lepton timed out during: LEP_RunOemReboot\n");
+			return -1;
+		}
 		usleep(2000000);
 		status = LEP_RunOemReboot(&lepton_port);
 		printf("...", status);
 		fflush(stdout);
+		count++;
 	}
 
 	// Wait until ready
 	usleep(2000000);
-	int ready = wait_until_ready();
-	if(ready != 0) return -1;
+	if(wait_until_ready() < 0)
+	{
+		printf("While reboot_lepton could not: wait_until_ready\n");
+		return -1;
+	}
 	printf(" SYSTEM READY\n");
 	return 0;
 }
@@ -167,18 +203,30 @@ int init_vsync(void)
 	// Open I2C port
 	LEP_CAMERA_PORT_DESC_T lepton_port;
 	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
-	if(status != LEP_OK) return -1;
+	if(status != LEP_OK)
+	{
+		printf("While init_vsync could not: LEP_OpenPort\n");
+		return -1;
+	}
 
 	// Check current GPIO mode
 	LEP_OEM_GPIO_MODE_E gpio_mode = LEP_OEM_END_GPIO_MODE;
 	status = LEP_GetOemGpioMode(&lepton_port, &gpio_mode);
-	if(status != LEP_OK) return -1;
+	if(status != LEP_OK)
+	{
+		printf("While init_vsync could not: LEP_GetOemGpioMode\n");
+		return -1;
+	}
 
 	// Set GPIO mode to VSYNC
 	if(gpio_mode != LEP_OEM_GPIO_MODE_VSYNC)
 	{
 		status = LEP_SetOemGpioMode(&lepton_port, LEP_OEM_GPIO_MODE_VSYNC);
-		if(status != LEP_OK) return -1;
+		if(status != LEP_OK)
+		{
+			printf("While init_vsync could not: LEP_SetOemGpioMode\n");
+			return -1;
+		}
 	}
 
 	// 0 on success
@@ -192,19 +240,32 @@ int set_video_format_raw14(void)
 {
 	// Open I2C port
 	LEP_CAMERA_PORT_DESC_T lepton_port;
-	LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
+	if(status != LEP_OK)
+	{
+		printf("While set_video_format_raw14 could not: LEP_OpenPort\n");
+		return -1;
+	}
 
 	// Check the current video format
 	LEP_OEM_VIDEO_OUTPUT_FORMAT_E format = LEP_END_VIDEO_OUTPUT_FORMAT;
-	LEP_RESULT status = LEP_GetOemVideoOutputFormat(&lepton_port, &format);
-	if(status != LEP_OK) return -1;
+	status = LEP_GetOemVideoOutputFormat(&lepton_port, &format);
+	if(status != LEP_OK)
+	{
+		printf("While set_video_format_raw14 could not: LEP_GetOemVideoOutputFormat\n");
+		return -1;
+	}
 
 	// Set RAW14 as video format
 	if(format != LEP_VIDEO_OUTPUT_FORMAT_RAW14)
 	{
 		format = LEP_VIDEO_OUTPUT_FORMAT_RAW14;
 		LEP_RESULT status = LEP_SetOemVideoOutputFormat(&lepton_port, format);
-		if(status != LEP_OK) return -1;
+		if(status != LEP_OK)
+		{
+			printf("While set_video_format_raw14 could not: LEP_SetOemVideoOutputFormat\n");
+			return -1;
+		}
 	}
 
 	// 0 on success
@@ -212,10 +273,68 @@ int set_video_format_raw14(void)
 }
 
 
+///===========================SPI CONFIG FUNCTIONS===========================///
+/**
+**/
+int open_spi(int *fd)
+{
+	*fd = open(spi_device, O_RDWR);
+	if (*fd < 0)
+	{
+		printf("While open_spi could not: open(spi_device, O_RDWR)\n");
+		return -1;
+	}
+	return 0;
+}
+
+
+/**
+**/
+int set_spi_mode(int *fd)
+{
+	const int mode = SPI_MODE;
+	if(ioctl(*fd, SPI_IOC_WR_MODE, &mode) == -1)
+	{
+		printf("While set_spi_mode could not: ioctl(fd, SPI_IOC_WR_MODE, &mode)\n");
+		return -1;
+	}
+	return 0;
+}
+
+
+/**
+**/
+int set_spi_bits_per_word(int *fd)
+{
+	const int bits = 8*SPI_BYTES_PER_WORD;
+	if(ioctl(*fd, SPI_IOC_WR_BITS_PER_WORD, &bits) == -1)
+	{
+		printf("While set_spi_bits_per_word could not: ioctl(*fd, SPI_IOC_WR_BITS_PER_WORD, &bits)\n");
+		return -1;
+	}
+	return 0;
+}
+
+
+/**
+**/
+int set_spi_speed(int *fd)
+{
+	const int speed = SPI_SPEED;
+	if(ioctl(*fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) == -1)
+	{
+		printf("While set_spi_speed could not: ioctl(*fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed)\n");
+		return -1;
+	}
+	return 0;
+
+}
+
+
 ///===========================FRAME STREAM AND SAVE FUNCTIONS===========================///
 /**
 **/
-void save_pgm_file(void)
+int save_pgm_file(void)
 {
 	int i;
 	int j;
@@ -230,8 +349,8 @@ void save_pgm_file(void)
 		image_index += 1;
 		if (image_index > 9999)
 		{
-			image_index = 0;
-			break;
+			printf("While save_pgm_file no available image names\n");
+			return -1;
 		}
 	} while (access(image_name, F_OK) == 0);
 
@@ -239,7 +358,8 @@ void save_pgm_file(void)
 	FILE *f = fopen(image_name, "w");
 	if (f == NULL)
 	{
-		printf("Error opening save file: Aborting save operation\n");
+		printf("While save_pgm_file could not: fopen(image_name, \"w\")\n");
+		return -1;
 	}
 
 	// Find min and max pixel values (ignore 0 pixel values)
@@ -272,6 +392,7 @@ void save_pgm_file(void)
 
 	// Close file
 	fclose(f);
+	return 0;
 }
 
 
@@ -405,73 +526,40 @@ int transfer_segment(int *spi_fd)
 int main(int argc, char *argv[])
 {
 	///=====================CONFIGURE SPI DEVICE=====================///
-	// Create file descriptor for SPI device
-	int spi_fd = open(spi_device, O_RDWR);
-	if (spi_fd < 0)
-	{
-		printf("Can't open spi device. Are DT overlays \"spicc\" and \"spicc-spidev\" enabled?\n"); // Abort if can't open SPI
-		return -1;
-	}
+	// Configure SPI device
+	int spi_fd;
+	if(open_spi(&spi_fd) < 0) exit(EXIT_FAILURE);
+	if(set_spi_mode(&spi_fd) < 0) exit(EXIT_FAILURE);
+	if(set_spi_bits_per_word(&spi_fd) < 0) exit(EXIT_FAILURE);
+	if(set_spi_speed(&spi_fd) < 0) exit(EXIT_FAILURE);
 
-	// Set SPI communication mode
-	const int mode = SPI_MODE;
-	if(ioctl(spi_fd, SPI_IOC_WR_MODE, &mode) == -1)
-	{
-		close(spi_fd);
-		printf("Can't set SPI mode\n"); // Abort if mode set failure
-		return -1;
-	}
-
-	// Set SPI bits per word
-	const int bits = 8*SPI_BYTES_PER_WORD;
-	if(ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) == -1)
-	{
-		close(spi_fd);
-		printf("Can't set SPI bits per word\n"); // Abort if bits set failure
-		return -1;
-	}
-
-	// Set SPI clock
-	const int speed = SPI_SPEED;
-	if(ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) == -1)
-	{
-		close(spi_fd);
-		printf("Can't set SPI clock speed\n"); // Abort if speed set failure
-		return -1;
-	}
-
-	// print configure SPI settings
-	printf("\n\n===SPI CONFIG===\n");
+	// Print SPI settings
+	printf("===SPI CONFIG===\n");
 	printf("Device: %s\n", spi_device);
-	printf("Mode: %d\nBits per Word: %d\nClock: %d MHz\n", mode, bits, speed/1000000);
+	printf("Mode: %d\nBits per Word: %d\nClock: %d MHz\n", SPI_MODE, SPI_BYTES_PER_WORD*8, SPI_SPEED/1000000);
 
 
 	///=====================CAMERA CONFIGURATION=====================///
-	// Set camera video output format to RAW14
-	printf("\n\n===CAMERA CONFIG===\n");
-	if(init_vsync() == 0) printf("GPIO mode: VSYNC\n");
+	// Configure camera settings
+	if(init_vsync() < 0) exit(EXIT_FAILURE);
+	if(set_video_format_raw14() < 0) exit(EXIT_FAILURE);
 
-	// Set camera GPIO to vsync
-	if(set_video_format_raw14() == 0) printf("Video output format: RAW14\n");
-	else
-	{
-		close(spi_fd);
-		printf("Can't set video format to RAW14\n");
-		return -1;
-	}
+	// Print camera settings
+	printf("\n\n===CAMERA CONFIG===\n");
+	printf("GPIO mode: VSYNC\n");
+	printf("Video output format: RAW14\n");
+
+
+	///=====================CAMERA STATUS=====================///
+	// Ensure Lepton camera status is good
+	if(wait_until_ready() < 0) exit(EXIT_FAILURE);
+
+	// Print camera status
+	printf("\n\n===CAMERA STATUS===\n");
+	printf("Camera status good\n");
 
 
 	///=====================IMAGE CAPTURE OPERATIONS=====================///
-	// Ensure Lepton camera status is good
-	printf("\n\n===CAMERA STATUS===\n");
-	if(wait_until_ready() == 0) printf("Camera status good\n");
-	else
-	{
-		close(spi_fd);
-		printf("Camera status returned failure\n");
-		return -1;
-	}
-
 	// Transfer up to 20 segments per frame
 	printf("\n\n===TRANSMITTING===\n");
 	int expected_segment = 1;
@@ -488,18 +576,15 @@ int main(int argc, char *argv[])
 		if(segment_num<0)
 		{
 			num_desync++;
+			expected_segment = 1;
 			printf("Desync occured recieving: Segment Number %d\n", expected_segment);
 			printf("Waiting for desync reset...\n");
 			printf("----------------------\n");
 
 			// If too many desynchronizations are detected, reboot
-			if(num_desync > 10)
+			if(num_desync > 3)
 			{
-				// Reset trackers
-				expected_segment = 1;
 				num_desync = 0;
-
-				// IO and reboot
 				printf("Too many desyncs detecting. Rebooting...\n\n\n");
 				if(reboot_lepton() < 0)
 				{
@@ -527,7 +612,7 @@ int main(int argc, char *argv[])
 				num_frames++;
 				expected_segment = 1;
 				num_desync = 0;
-				save_pgm_file();
+				if(save_pgm_file() < 0) exit(EXIT_FAILURE);
 				printf("Image captured\n");
 
 				// Terminal operations post capture
