@@ -28,8 +28,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdint.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <getopt.h>
 #include <fcntl.h>
 #include <limits.h>
 
@@ -37,7 +35,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/ioctl.h>
 
 // Linux kernel libs
-#include <linux/types.h>
 #include <linux/spi/spidev.h>
 #include <linux/i2c-dev.h>
 
@@ -336,6 +333,7 @@ void unpack_raw14_payload(int segment_num)
 **/
 int transfer_segment(int *spi_fd)
 {
+	uint8_t i;
 	uint16_t packet_ind;
 	uint16_t expected_packet_num;
 	uint16_t packet_num = 65535;
@@ -370,7 +368,7 @@ int transfer_segment(int *spi_fd)
 		read(*spi_fd, &seg_buf[packet_ind], SEGMENT_SIZE-PACKET_SIZE);
 
 		// Extract data from the rest of the segment
-		for(int i = 0; i < PACKETS_PER_SEGMENT-1; i++)
+		for(i = 0; i < PACKETS_PER_SEGMENT-1; i++)
 		{
 			// Check for correct packet number
 			packet_num = seg_buf[get_ind(packet_ind + 1)];
