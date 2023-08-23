@@ -73,7 +73,7 @@ static const char *spi_device = "/dev/spidev0.0";
 #define SEGMENT_SIZE (PACKET_SIZE * PACKETS_PER_SEGMENT)
 
 // Create a buffer to hold a single segment.
-static uint8_t seg_buf[SEGMENT_SIZE];
+//static uint8_t seg_buf[SEGMENT_SIZE];
 
 // Create a buffer to hold a single frame. Each frame is 120x160 pixels.
 // Each pixel is an unsigned 16 bit integer
@@ -334,7 +334,7 @@ int set_spi_speed(int *fd)
 ///===========================FRAME STREAM AND SAVE FUNCTIONS===========================///
 /**
 **/
-int save_pgm_file(void)
+int save_pgm(void)
 {
 	int i;
 	int j;
@@ -408,7 +408,7 @@ uint16_t get_ind(uint16_t des_ind)
 
 /**
 **/
-void unpack_raw14_payload(int segment_num)
+void unpack_raw14_payload(int segment_num, uint8_t seg_buf)
 {
 	uint16_t packet_ind;
 	uint16_t pix_ind_0;
@@ -452,7 +452,7 @@ void unpack_raw14_payload(int segment_num)
 
 /**
 **/
-int transfer_segment(int *spi_fd)
+int transfer_segment(int *spi_fd, uint8_t *seg_buf)
 {
 	uint8_t i;
 	uint16_t packet_ind;
@@ -463,7 +463,7 @@ int transfer_segment(int *spi_fd)
 	// Recieve discard packets until the first valid packet is detected
 	do {
 		// Read a single frame packet and determine validity
-		read(*spi_fd, &seg_buf[0], PACKET_SIZE);
+		read(*spi_fd, seg_buf[0], PACKET_SIZE);
 		if((seg_buf[get_ind(0)] & 0x0f) == 0x0f) continue;
 
 		// If the packet is valid, read the packet number
@@ -486,7 +486,7 @@ int transfer_segment(int *spi_fd)
 	{
 		// Read the entire segment except for the first packet
 		// The first packet has already been read
-		read(*spi_fd, &seg_buf[packet_ind], SEGMENT_SIZE-PACKET_SIZE);
+		read(*spi_fd, seg_buf[packet_ind], SEGMENT_SIZE-PACKET_SIZE);
 
 		// Extract data from the rest of the segment
 		for(i = 0; i < PACKETS_PER_SEGMENT-1; i++)
@@ -562,6 +562,7 @@ int main(int argc, char *argv[])
 	///=====================IMAGE CAPTURE OPERATIONS=====================///
 	// Transfer up to 20 segments per frame
 	printf("\n\n===TRANSMITTING===\n");
+	uint8_t seg_buf[SEGMENT_SIZE];
 	int expected_segment = 1;
 	int segment_num;
 	int num_desync = 0;
@@ -570,7 +571,7 @@ int main(int argc, char *argv[])
 	for(int i = 0; i < 20*num_frames_wanted; i++)
 	{
 		// Get a frame segment
-		segment_num = transfer_segment(&spi_fd);
+		segment_num = transfer_segment(&spi_fd, &seg_buf);
 
 		// Segment numbers <0 indicate desynchronization
 		if(segment_num<0)
@@ -612,7 +613,7 @@ int main(int argc, char *argv[])
 				num_frames++;
 				expected_segment = 1;
 				num_desync = 0;
-				if(save_pgm_file() < 0) exit(EXIT_FAILURE);
+				if(save_pgm() < 0) exit(EXIT_FAILURE);
 				printf("Image captured\n");
 
 				// Terminal operations post capture
