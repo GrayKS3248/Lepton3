@@ -90,7 +90,7 @@ int get_lepton_status(void)
 	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
 	if(status != LEP_OK)
 	{
-		printf("While get_lepton_status could not: LEP_OpenPort\n");
+		printf("While: get_lepton_status(), could not: LEP_OpenPort(LEP_UINT16, LEP_CAMERA_PORT_E, LEP_UINT16, LEP_CAMERA_PORT_DESC_T_PTR)\n");
 		return -1;
 	}
 
@@ -99,7 +99,7 @@ int get_lepton_status(void)
 	status = LEP_GetSysStatus(&lepton_port, &sys_status);
 	if(status != LEP_OK)
 	{
-		printf("While get_lepton_status could not: LEP_GetSysStatus\n");
+		printf("While: get_lepton_status(), could not: LEP_GetSysStatus(LEP_CAMERA_PORT_DESC_T_PTR, LEP_STATUS_T_PTR)\n");
 		return -1;
 	}
 
@@ -125,7 +125,7 @@ int wait_until_ready(void)
 		// Check status for failure
 		if(status < 0)
 		{
-			printf("While wait_until_ready could not: get_lepton_status\n");
+			printf("While: wait_until_ready(), could not: get_lepton_status()\n");
 			return -1;
 		}
 
@@ -139,7 +139,7 @@ int wait_until_ready(void)
 		count++;
 		if(count >= 10)
 		{
-			printf("While wait_until_ready timed out during: get_lepton_status\n");
+			printf("While: wait_until_ready(), timed out during: get_lepton_status()\n");
 			return -1;
 		}
 	}
@@ -161,7 +161,7 @@ int reboot_lepton(void)
 	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
 	if(status != LEP_OK)
 	{
-		printf("While reboot_lepton could not: LEP_OpenPort\n");
+		printf("While: reboot_lepton(), could not: LEP_OpenPort(LEP_UINT16, LEP_CAMERA_PORT_E, LEP_UINT16, LEP_CAMERA_PORT_DESC_T_PTR)\n");
 		return -1;
 	}
 
@@ -174,7 +174,7 @@ int reboot_lepton(void)
 	{
 		if(count >= 5)
 		{
-			printf("While reboot_lepton timed out during: LEP_RunOemReboot\n");
+			printf("While: reboot_lepton(), timed out during: LEP_RunOemReboot(LEP_CAMERA_PORT_DESC_T_PTR)\n");
 			return -1;
 		}
 		usleep(2000000);
@@ -188,7 +188,7 @@ int reboot_lepton(void)
 	usleep(2000000);
 	if(wait_until_ready() < 0)
 	{
-		printf("While reboot_lepton could not: wait_until_ready\n");
+		printf("While: reboot_lepton(), could not: wait_until_ready()\n");
 		return -1;
 	}
 	printf(" SYSTEM READY\n");
@@ -205,7 +205,7 @@ int init_vsync(void)
 	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
 	if(status != LEP_OK)
 	{
-		printf("While init_vsync could not: LEP_OpenPort\n");
+		printf("While: init_vsync(), could not: LEP_OpenPort(LEP_UINT16, LEP_CAMERA_PORT_E, LEP_UINT16, LEP_CAMERA_PORT_DESC_T_PTR)\n");
 		return -1;
 	}
 
@@ -214,7 +214,7 @@ int init_vsync(void)
 	status = LEP_GetOemGpioMode(&lepton_port, &gpio_mode);
 	if(status != LEP_OK)
 	{
-		printf("While init_vsync could not: LEP_GetOemGpioMode\n");
+		printf("While: init_vsync(), could not: LEP_GetOemGpioMode(LEP_CAMERA_PORT_DESC_T_PTR, LEP_OEM_GPIO_MODE_E_PTR)\n");
 		return -1;
 	}
 
@@ -224,7 +224,7 @@ int init_vsync(void)
 		status = LEP_SetOemGpioMode(&lepton_port, LEP_OEM_GPIO_MODE_VSYNC);
 		if(status != LEP_OK)
 		{
-			printf("While init_vsync could not: LEP_SetOemGpioMode\n");
+			printf("While: init_vsync(), could not: LEP_SetOemGpioMode(LEP_CAMERA_PORT_DESC_T_PTR, LEP_OEM_GPIO_MODE_E)\n");
 			return -1;
 		}
 	}
@@ -243,7 +243,7 @@ int set_video_format_raw14(void)
 	LEP_RESULT status = LEP_OpenPort(1, LEP_CCI_TWI, 400, &lepton_port);
 	if(status != LEP_OK)
 	{
-		printf("While set_video_format_raw14 could not: LEP_OpenPort\n");
+		printf("While: set_video_format_raw14(), could not: LEP_OpenPort(LEP_UINT16, LEP_CAMERA_PORT_E, LEP_UINT16, LEP_CAMERA_PORT_DESC_T_PTR)\n");
 		return -1;
 	}
 
@@ -252,7 +252,7 @@ int set_video_format_raw14(void)
 	status = LEP_GetOemVideoOutputFormat(&lepton_port, &format);
 	if(status != LEP_OK)
 	{
-		printf("While set_video_format_raw14 could not: LEP_GetOemVideoOutputFormat\n");
+		printf("While: set_video_format_raw14(), could not: LEP_GetOemVideoOutputFormat(LEP_CAMERA_PORT_DESC_T_PTR, LEP_OEM_VIDEO_OUTPUT_FORMAT_E_PTR)\n");
 		return -1;
 	}
 
@@ -263,7 +263,7 @@ int set_video_format_raw14(void)
 		LEP_RESULT status = LEP_SetOemVideoOutputFormat(&lepton_port, format);
 		if(status != LEP_OK)
 		{
-			printf("While set_video_format_raw14 could not: LEP_SetOemVideoOutputFormat\n");
+			printf("While: set_video_format_raw14(), could not: LEP_SetOemVideoOutputFormat(LEP_CAMERA_PORT_DESC_T_PTR, LEP_OEM_VIDEO_OUTPUT_FORMAT_E)\n");
 			return -1;
 		}
 	}
@@ -281,7 +281,7 @@ int open_spi(int *fd)
 	*fd = open(spi_device, O_RDWR);
 	if (*fd < 0)
 	{
-		printf("While open_spi could not: open(spi_device, O_RDWR)\n");
+		printf("While: open_spi(int*), could not: open(const char*, mode_t)\n");
 		return -1;
 	}
 	return 0;
@@ -295,7 +295,7 @@ int set_spi_mode(int *fd)
 	const int mode = SPI_MODE;
 	if(ioctl(*fd, SPI_IOC_WR_MODE, &mode) == -1)
 	{
-		printf("While set_spi_mode could not: ioctl(fd, SPI_IOC_WR_MODE, &mode)\n");
+		printf("While: set_spi_mode(int*), could not: ioctl(int, unsinged long, const int*)\n");
 		return -1;
 	}
 	return 0;
@@ -309,7 +309,7 @@ int set_spi_bits_per_word(int *fd)
 	const int bits = 8*SPI_BYTES_PER_WORD;
 	if(ioctl(*fd, SPI_IOC_WR_BITS_PER_WORD, &bits) == -1)
 	{
-		printf("While set_spi_bits_per_word could not: ioctl(*fd, SPI_IOC_WR_BITS_PER_WORD, &bits)\n");
+		printf("While: set_spi_bits_per_word(int*), could not: ioctl(int, unsinged long, const int*)\n");
 		return -1;
 	}
 	return 0;
@@ -323,7 +323,7 @@ int set_spi_speed(int *fd)
 	const int speed = SPI_SPEED;
 	if(ioctl(*fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) == -1)
 	{
-		printf("While set_spi_speed could not: ioctl(*fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed)\n");
+		printf("While: set_spi_speed(int*), could not: ioctl(int, unsinged long, const int*)\n");
 		return -1;
 	}
 	return 0;
@@ -349,7 +349,7 @@ int save_pgm_file(void)
 		image_index += 1;
 		if (image_index > 9999)
 		{
-			printf("While save_pgm_file no available image names\n");
+			printf("While: save_pgm_file(), failed: no available image names\n");
 			return -1;
 		}
 	} while (access(image_name, F_OK) == 0);
@@ -358,7 +358,7 @@ int save_pgm_file(void)
 	FILE *f = fopen(image_name, "w");
 	if (f == NULL)
 	{
-		printf("While save_pgm_file could not: fopen(image_name, \"w\")\n");
+		printf("While: save_pgm_file(), could not: fopen(const char*, const char*)\n");
 		return -1;
 	}
 
@@ -470,7 +470,7 @@ int transfer_segment(int *spi_fd)
 		packet_num = seg_buf[get_ind(1)];
 		if(packet_num != 0)
 		{
-			printf("Unexpected packet number: Expected 0, Got %d\n", packet_num);
+			printf("Unexpected packet number: expected 0, got %d\n", packet_num);
 			return -1;
 		}
 
@@ -495,7 +495,7 @@ int transfer_segment(int *spi_fd)
 			packet_num = seg_buf[get_ind(packet_ind + 1)];
 			if(packet_num != expected_packet_num)
 			{
-				printf("Unexpected packet number: Expected %d, Got %d\n", expected_packet_num, packet_num);
+				printf("Unexpected packet number: expected %d, got %d\n", expected_packet_num, packet_num);
 				return -1;
 			}
 
